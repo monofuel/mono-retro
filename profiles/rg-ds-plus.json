@@ -1,0 +1,36 @@
+{
+  "title": "RG DS PLUS",
+  "display": "drm",
+  "drmDevice": "/dev/dri/card0",
+  "outputs": ["DSI-1", "DSI-2"],
+  "audioDevice": "mono_retro_ds_plus",
+  "inputNames": ["ANBERNIC-rk3568-keys", "adc-keys", "dierct-keys-polled", "gt9xx-0"],
+  "touchName": "gt9xx-0",
+  "rotation": 0,
+  "touchRotation": 0,
+  "toneKey": 311,
+  "sticks": [
+    {"label": "LEFT STICK", "device": "ANBERNIC-rk3568-keys", "x": 2, "y": 3}
+  ],
+  "bindings": [
+    {"label":"UP", "device":"ANBERNIC-rk3568-keys", "kind":3, "code":17, "value":-1},
+    {"label":"DOWN", "device":"ANBERNIC-rk3568-keys", "kind":3, "code":17, "value":1},
+    {"label":"LEFT", "device":"ANBERNIC-rk3568-keys", "kind":3, "code":16, "value":-1},
+    {"label":"RIGHT", "device":"ANBERNIC-rk3568-keys", "kind":3, "code":16, "value":1},
+    {"label":"A", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":304, "value":1},
+    {"label":"B", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":305, "value":1},
+    {"label":"X", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":307, "value":1},
+    {"label":"Y", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":306, "value":1},
+    {"label":"L", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":308, "value":1},
+    {"label":"R", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":309, "value":1},
+    {"label":"SELECT", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":310, "value":1},
+    {"label":"START", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":311, "value":1},
+    {"label":"MENU", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":312, "value":1},
+    {"label":"BACK", "device":"adc-keys", "kind":1, "code":158, "value":1},
+    {"label":"VOL-", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":114, "value":1},
+    {"label":"VOL+", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":115, "value":1},
+    {"label":"L2", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":314, "value":1},
+    {"label":"R2", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":315, "value":1},
+    {"label":"L3", "device":"ANBERNIC-rk3568-keys", "kind":1, "code":313, "value":1}
+  ]
+}

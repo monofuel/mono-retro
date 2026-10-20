@@ -1,6 +1,23 @@
 import
   std/[json],
-  retro/[audio, framebuffer, input, pattern, settings]
+  retro/[audio, display, drm, framebuffer, input, pattern, settings, touch]
+
+block:
+  var configuration = defaultSettings()
+  configuration.framebuffer = "/dev/null"
+  doAssert configuration.displayBackend() == "fbdev"
+  configuration.framebuffer = "/proc/mono-retro-missing-framebuffer"
+  doAssert configuration.displayBackend() == "drm"
+  configuration.display = "fbdev"
+  doAssert configuration.displayBackend() == "fbdev"
+  configuration.display = "auto"
+  configuration.framebuffer = currentSourcePath()
+  var rejectedFile = false
+  try:
+    discard configuration.displayBackend()
+  except ValueError:
+    rejectedFile = true
+  doAssert rejectedFile
 
 block:
   let
@@ -115,3 +132,124 @@ block:
   var mapped = defaultSettings()
   mapped.applyProfile(parseJson("{\"bindings\":[{\"label\":\"LEFT\",\"device\":\"test\",\"kind\":3,\"code\":16,\"value\":-1}]}"))
   doAssert mapped.bindings == @[left]
+
+block:
+  doAssert identifyDevice("rockchip,rk3568-deep-lp3-v10\0rockchip,rk3568",
+    @["ANBERNIC-rk3568-keys"], "", 2) == rgDsPlusDevice
+  doAssert identifyDevice("rockchip,rk3568", @[], "", 2) == genericDevice
+  doAssert identifyDevice("rockchip,rk3568", @["ANBERNIC-rk3568-keys"], "", 1) == genericDevice
+  doAssert identifyDevice("allwinner,h616\0arm,sun50iw9p1",
+    @["ANBERNIC-keys"], "720,960", 0) == rgSpDevice
+  doAssert identifyDevice("arm,sun50iw9p1", @["ANBERNIC-keys"], "640,480", 0) == genericDevice
+  let
+    sp = parseSettings(@[], rgSpDevice)
+    ds = parseSettings(@[], rgDsPlusDevice)
+    overridden = parseSettings(@["--output:DSI-2", "--output:DSI-1", "--pcm:null"], rgDsPlusDevice)
+    generic = parseSettings(@["--device:generic"], rgDsPlusDevice)
+  doAssert sp.bindings.len == 17 and sp.audioDevice == "mono_retro_test"
+  doAssert sp.display == "fbdev"
+  doAssert ds.bindings.len == 19 and ds.sticks.len == 1
+  doAssert ds.sticks[0].label == "LEFT STICK"
+  doAssert ds.display == "drm" and ds.outputs == @["DSI-1", "DSI-2"]
+  doAssert ds.touchName == "gt9xx-0"
+  doAssert overridden.outputs == @["DSI-2", "DSI-1"] and overridden.audioDevice == "null"
+  doAssert generic.bindings.len == 0 and generic.outputs.len == 0
+  var
+    back: Binding
+    menu: Binding
+  for binding in ds.bindings:
+    if binding.label == "BACK": back = binding
+    if binding.label == "MENU": menu = binding
+  doAssert back.device == "adc-keys" and back.code == 158
+  doAssert menu.device == "ANBERNIC-rk3568-keys" and menu.code == 312
+
+block:
+  var controls = @[Control(kind: EventAbsolute, code: 16, minimum: 0, maximum: 1)]
+  doAssert controls[0].axisDirection() == 0
+  controls.applyEvent(InputEvent(kind: EventAbsolute, code: 16, value: 1))
+  doAssert controls[0].axisDirection() == 1 and controls[0].positiveSeen
+  controls.applyEvent(InputEvent(kind: EventAbsolute, code: 16, value: 0))
+  doAssert controls[0].axisDirection() == 0 and not controls[0].negativeSeen
+  controls.applyEvent(InputEvent(kind: EventAbsolute, code: 16, value: -1))
+  doAssert controls[0].negativeSeen
+  var stick = Control(kind: EventAbsolute, code: 2, minimum: -4096, maximum: 4096, flat: 32)
+  doAssert stick.axisPosition() == 0
+  stick.value = 20
+  doAssert stick.axisPosition() == 20.0 / 4096
+  stick.value = -1
+  doAssert stick.axisPosition() == -1.0 / 4096
+  stick.value = -4096
+  doAssert stick.axisPosition() == -1
+  stick.value = 9000
+  doAssert stick.axisPosition() == 1
+
+block:
+  let device = InputDevice(controls: @[
+    Control(kind: EventAbsolute, code: SlotCode, minimum: 0, maximum: 15),
+    Control(kind: EventAbsolute, code: PositionXCode, minimum: 0, maximum: 1024),
+    Control(kind: EventAbsolute, code: PositionYCode, minimum: 0, maximum: 768)])
+  device.configureTouch()
+  doAssert device.touch.enabled and device.touch.multitouch
+  doAssert device.touch.contacts.len == 16
+  device.touch.apply(EventAbsolute, SlotCode, 3)
+  device.touch.apply(EventAbsolute, TrackingCode, 7)
+  device.touch.apply(EventAbsolute, PositionXCode, 1024)
+  device.touch.apply(EventAbsolute, PositionYCode, 768)
+  doAssert not device.touch.contacts[3].active
+  device.touch.apply(EventSync, 0, 0)
+  doAssert device.touch.contacts[3].active and not device.touch.contacts[0].active
+  doAssert device.touch.touchPoint(device.touch.contacts[3], 1024, 768, 0) == (1023, 767)
+  device.touch.apply(EventAbsolute, PositionXCode, 512)
+  doAssert device.touch.contacts[3].x == 1024
+  device.touch.apply(EventSync, 0, 0)
+  doAssert device.touch.contacts[3].x == 512
+  device.touch.apply(EventAbsolute, SlotCode, 0)
+  device.touch.apply(EventAbsolute, TrackingCode, 8)
+  device.touch.apply(EventAbsolute, PositionXCode, 0)
+  device.touch.apply(EventAbsolute, PositionYCode, 0)
+  device.touch.apply(EventSync, 0, 0)
+  doAssert device.touch.contacts[0].active and device.touch.contacts[3].active
+  device.touch.apply(EventAbsolute, SlotCode, 3)
+  device.touch.apply(EventAbsolute, TrackingCode, -1)
+  device.touch.apply(EventSync, 0, 0)
+  doAssert not device.touch.contacts[3].active and device.touch.contacts[0].active
+  var trace: TouchTrace
+  trace.observe(device.touch, 1024, 768, 0)
+  doAssert trace.samples.len > 0
+  device.touch.clear()
+  doAssert device.touch.samples.len == 0
+  for contact in device.touch.contacts:
+    doAssert not contact.active
+
+block:
+  let device = InputDevice(controls: @[
+    Control(kind: EventKey, code: TouchCode),
+    Control(kind: EventAbsolute, code: 0, minimum: 100, maximum: 1100),
+    Control(kind: EventAbsolute, code: 1, minimum: 50, maximum: 850)])
+  device.configureTouch()
+  doAssert device.touch.enabled and not device.touch.multitouch
+  device.touch.apply(EventKey, TouchCode, 1)
+  device.touch.apply(EventAbsolute, 0, 100)
+  device.touch.apply(EventAbsolute, 1, 50)
+  device.touch.apply(EventSync, 0, 0)
+  let contact = device.touch.contacts[0]
+  doAssert device.touch.touchPoint(contact, 1024, 768, 0) == (0, 0)
+  doAssert device.touch.touchPoint(contact, 1024, 768, 90) == (1023, 0)
+  doAssert device.touch.touchPoint(contact, 1024, 768, 180) == (1023, 767)
+  doAssert device.touch.touchPoint(contact, 1024, 768, 270) == (0, 767)
+  device.touch.apply(EventKey, TouchCode, 0)
+  device.touch.apply(EventSync, 0, 0)
+  doAssert not device.touch.contacts[0].active
+  var trace: TouchTrace
+  trace.observe(device.touch, 1024, 768, 0)
+  doAssert trace.samples.len > 0
+
+block:
+  doAssert chooseCrtc([90'u32, 110, 130], 130, 5, []) == 130
+  doAssert chooseCrtc([90'u32, 110, 130], 0, 5, [90'u32]) == 130
+  var rejected = false
+  try:
+    discard chooseCrtc([90'u32, 130], 90, 1, [90'u32])
+  except IOError:
+    rejected = true
+  doAssert rejected

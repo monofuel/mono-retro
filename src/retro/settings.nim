@@ -1,23 +1,81 @@
 import
-  std/[json, parseopt, strutils],
+  std/[json, os, parseopt, strutils],
   ./input
 
 type
+  DeviceKind* = enum
+    genericDevice, rgSpDevice, rgDsPlusDevice
+  StickBinding* = object
+    label*, device*: string
+    x*, y*: uint16
   Settings* = object
     title*, framebuffer*, audioDevice*, preview*, command*, saveProfile*: string
+    display*, drmDevice*, touchName*: string
+    outputs*: seq[string]
+    sticks*: seq[StickBinding]
     inputNames*, inputDevices*: seq[string]
     bindings*: seq[Binding]
-    rotation*, seconds*, toneKey*: int
+    rotation*, touchRotation*, seconds*, toneKey*: int
+
+const
+  RgSpProfile = staticRead("../../profiles/rg-sp.json")
+  RgDsPlusProfile = staticRead("../../profiles/rg-ds-plus.json")
+
+proc identifyDevice*(compatible: string, inputs: seq[string],
+    framebufferSize: string, dsiCount: int): DeviceKind =
+  ## Identify supported boards from a combination of hardware signatures.
+  if "rockchip,rk3568" in compatible and "ANBERNIC-rk3568-keys" in inputs and dsiCount == 2:
+    rgDsPlusDevice
+  elif ("sun50iw9" in compatible or "sun50i-h700" in compatible) and
+      "ANBERNIC-keys" in inputs and framebufferSize.startsWith("720,"):
+    rgSpDevice
+  else:
+    genericDevice
+
+proc detectDevice*(): DeviceKind =
+  ## Read device-tree and sysfs identifiers without changing hardware state.
+  var
+    compatible = ""
+    framebufferSize = ""
+    inputs: seq[string]
+    dsiCount = 0
+  if fileExists("/proc/device-tree/compatible"):
+    compatible = readFile("/proc/device-tree/compatible")
+  if fileExists("/sys/class/graphics/fb0/virtual_size"):
+    framebufferSize = readFile("/sys/class/graphics/fb0/virtual_size").strip()
+  for path in walkFiles("/sys/class/input/event*/device/name"):
+    inputs.add readFile(path).strip()
+  for path in walkFiles("/sys/class/drm/card*-DSI-*/status"):
+    if readFile(path).strip() == "connected":
+      inc dsiCount
+  identifyDevice(compatible, inputs, framebufferSize, dsiCount)
 
 proc defaultSettings*(): Settings =
   Settings(title: "LINUX HANDHELD", framebuffer: "/dev/fb0", audioDevice: "default",
-    command: "test", seconds: 300, toneKey: 315)
+    display: "auto", drmDevice: "/dev/dri/card0", command: "test", seconds: 300, toneKey: 315)
 
 proc applyProfile*(settings: var Settings, profile: JsonNode) =
   for key, value in profile:
     case key
     of "title": settings.title = value.getStr()
     of "framebuffer": settings.framebuffer = value.getStr()
+    of "display": settings.display = value.getStr()
+    of "drmDevice": settings.drmDevice = value.getStr()
+    of "outputs":
+      settings.outputs = @[]
+      for output in value: settings.outputs.add output.getStr()
+    of "touchName": settings.touchName = value.getStr()
+    of "touchRotation": settings.touchRotation = value.getInt()
+    of "sticks":
+      settings.sticks = @[]
+      for stick in value:
+        let
+          x = stick["x"].getInt()
+          y = stick["y"].getInt()
+        if x notin 0..63 or y notin 0..63 or x == y:
+          raise newException(ValueError, "Invalid joystick axes")
+        settings.sticks.add StickBinding(label: stick["label"].getStr(),
+          device: stick["device"].getStr(), x: uint16(x), y: uint16(y))
     of "audioDevice": settings.audioDevice = value.getStr()
     of "rotation": settings.rotation = value.getInt()
     of "toneKey": settings.toneKey = value.getInt()
@@ -41,6 +99,13 @@ proc applyProfile*(settings: var Settings, profile: JsonNode) =
 proc validate*(settings: Settings) =
   if settings.rotation notin [0, 90, 180, 270]:
     raise newException(ValueError, "Rotation must be 0, 90, 180 or 270")
+  if settings.touchRotation notin [0, 90, 180, 270]:
+    raise newException(ValueError, "Touch rotation must be 0, 90, 180 or 270")
+  if settings.display notin ["auto", "fbdev", "drm"]:
+    raise newException(ValueError, "Display must be auto, fbdev or drm")
+  for index, output in settings.outputs:
+    if output.len == 0 or output in settings.outputs[0 ..< index]:
+      raise newException(ValueError, "Display outputs must be unique nonempty names")
   if settings.seconds notin 1..3600:
     raise newException(ValueError, "Duration must be between 1 and 3600 seconds")
   if settings.toneKey notin 0..767:
@@ -50,9 +115,25 @@ proc validate*(settings: Settings) =
   if settings.command == "calibrate" and settings.saveProfile.len == 0:
     raise newException(ValueError, "Calibration requires --save-profile:PATH")
 
-proc parseSettings*(arguments: seq[string]): Settings =
+proc parseSettings*(arguments: seq[string], detected = genericDevice): Settings =
   result = defaultSettings()
+  var
+    device = detected
+    outputsOverridden = false
   var parser = initOptParser(arguments)
+  for kind, key, value in parser.getopt():
+    if kind == cmdLongOption and key == "device":
+      case value
+      of "auto": device = detected
+      of "generic": device = genericDevice
+      of "rg-sp": device = rgSpDevice
+      of "rg-ds-plus": device = rgDsPlusDevice
+      else: raise newException(ValueError, "Unknown device: " & value)
+  case device
+  of rgSpDevice: result.applyProfile(parseJson(RgSpProfile))
+  of rgDsPlusDevice: result.applyProfile(parseJson(RgDsPlusProfile))
+  of genericDevice: discard
+  parser = initOptParser(arguments)
   for kind, key, value in parser.getopt():
     if kind == cmdLongOption and key == "profile":
       result.applyProfile(parseFile(value))
@@ -62,9 +143,21 @@ proc parseSettings*(arguments: seq[string]): Settings =
     of cmdArgument: result.command = key
     of cmdLongOption, cmdShortOption:
       case key
-      of "profile": discard
+      of "profile", "device": discard
       of "help", "h": result.command = "help"
-      of "fb": result.framebuffer = value
+      of "fb":
+        result.framebuffer = value
+        result.display = "fbdev"
+      of "display": result.display = value
+      of "drm":
+        result.drmDevice = value
+        result.display = "drm"
+      of "output":
+        if not outputsOverridden:
+          result.outputs = @[]
+          outputsOverridden = true
+        result.outputs.add value
+      of "touch-rotate": result.touchRotation = parseInt(value)
       of "input": result.inputDevices.add value
       of "pcm": result.audioDevice = value
       of "rotate": result.rotation = parseInt(value)

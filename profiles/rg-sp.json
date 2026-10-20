@@ -1,5 +1,6 @@
 {
   "title": "RG SP",
+  "display": "fbdev",
   "framebuffer": "/dev/fb0",
   "audioDevice": "mono_retro_test",
   "inputNames": [

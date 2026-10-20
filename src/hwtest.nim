@@ -1,10 +1,15 @@
 import
   std/[json, monotimes, os, posix, strformat, times],
-  retro/[audio, framebuffer, input, pattern, settings]
+  retro/[audio, display, input, pattern, settings, touch]
 
 const
   Help = """Usage: hwtest [test|info|input|audio|calibrate] [options]
   --profile:PATH    Device JSON profile
+  --device:NAME     auto (default), rg-sp, rg-ds-plus, generic
+  --display:NAME    auto (default), fbdev, drm
+  --drm:PATH        DRM device (default /dev/dri/card0)
+  --output:NAME     DRM connector; repeat in top/bottom order
+  --touch-rotate:N  Touch rotation: 0, 90, 180, 270
   --fb:PATH         Framebuffer (default /dev/fb0)
   --input:PATH      Input device; repeat for multiple devices
   --pcm:NAME        ALSA PCM (default default)
@@ -16,7 +21,7 @@ const
 
 Test mode never plays sound automatically. Start plays a short left/right tone.
 Hold Select+Start for two seconds to exit, or use Ctrl+C. Input is observed without an exclusive grab.
-Framebuffer bytes and offsets are restored on normal exit, SIGINT and SIGTERM.
+Display cleanup runs on normal exit, SIGINT and SIGTERM.
 """
 
 var stopping = false
@@ -62,6 +67,28 @@ proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, to
       result.rect(x, y, cellWidth - 3, cellHeight - 3, color)
       result.text(x + 3, y + 3, badge.label, if badge.active or badge.seen: Black else: White, scale)
     inc index
+  if settings.sticks.len > 0:
+    let
+      stickTop = top + textHeight * 2 + ((badges.len + columns - 1) div columns) * cellHeight + margin
+      size = min(150, max(40, (height - stickTop - textHeight * 6 - 30)))
+    for stickIndex, stick in settings.sticks:
+      let
+        left = margin + stickIndex * (width - margin * 2) div settings.sticks.len
+        half = size div 2
+      result.text(left, stickTop, stick.label, White, scale)
+      result.rect(left, stickTop + textHeight, size, size, Gray)
+      result.rect(left + half, stickTop + textHeight, 1, size, White)
+      result.rect(left, stickTop + textHeight + half, size, 1, White)
+      for device in devices:
+        if device.name == stick.device:
+          let
+            xAxis = device.axis(stick.x)
+            yAxis = device.axis(stick.y)
+            x = int((xAxis.axisPosition() + 1) * float(size - 1) / 2)
+            y = int((yAxis.axisPosition() + 1) * float(size - 1) / 2)
+            values = &"X {xAxis.value} Y {yAxis.value}"
+          result.rect(left + x - 3, stickTop + textHeight + y - 3, 7, 7, Cyan)
+          result.text(left, stickTop + textHeight + size + 5, values, Green, max(1, scale - 1))
   let
     footer = height - 28 - textHeight * 3
     summary = &"SEEN {seen}/{index} - TONES {tones}"
@@ -69,6 +96,46 @@ proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, to
   result.text(margin, footer, summary, Green, scale)
   result.text(margin, footer + textHeight, instructions, White, scale)
   result.text(margin, footer + textHeight * 2, "TOP: COLORS - BOTTOM: GRAY - MOVING MARKER", White, scale)
+
+proc drawTouch(settings: Settings, state: TouchState, trace: TouchTrace,
+    width, height, tick: int): Canvas =
+  ## Draw the lower-screen touch targets, trails and current contacts.
+  result = newCanvas(width, height)
+  result.fill(Background)
+  let
+    scale = max(1, min(width div 340, height div 240))
+    margin = max(12, width div 64)
+    positions = targets(width, height)
+  for x in countup(0, width - 1, max(1, width div 16)):
+    result.rect(x, 0, 1, height, Gray)
+  for y in countup(0, height - 1, max(1, height div 12)):
+    result.rect(0, y, width, 1, Gray)
+  for sample in trace.samples:
+    result.rect(sample.x - 1, sample.y - 1, 3, 3, Cyan)
+  for index, point in positions:
+    let color = if trace.tested[index]: Green else: White
+    result.rect(point.x - 12, point.y - 1, 25, 3, color)
+    result.rect(point.x - 1, point.y - 12, 3, 25, color)
+  var
+    active = 0
+    tested = 0
+  for value in trace.tested:
+    if value: inc tested
+  for contact in state.contacts:
+    if contact.active:
+      let
+        point = state.touchPoint(contact, width, height, settings.touchRotation)
+        label = &"ID {contact.id} X {point.x} Y {point.y}"
+      result.rect(point.x - 7, point.y - 7, 15, 15, Green)
+      result.text(margin, height - 65 - active * 9 * scale, label, Cyan, scale)
+      inc active
+  let summary = &"TOUCHES {active} - TARGETS {tested}/9"
+  result.text(margin, height div 6, settings.title & " - TOUCH SCREEN", White, scale)
+  result.text(margin, height div 6 + 12 * scale, "DRAW AND TOUCH ALL NINE CROSSES - X: CLEAR", White, scale)
+  result.text(margin, height div 6 + 24 * scale, summary, Green, scale)
+  if not state.enabled:
+    result.text(margin, height div 2, "NO TOUCH DEVICE SELECTED", White, scale)
+  result.rect(4 + tick mod max(1, width - 20), height - 6, 12, 4, Cyan)
 
 proc pressed(devices: seq[InputDevice], code: uint16): bool =
   for device in devices:
@@ -83,32 +150,39 @@ proc namedPressed(settings: Settings, devices: seq[InputDevice], name: string, f
     if binding.label == name:
       return binding.active(devices)
 
+proc bindingPress(settings: Settings, device: InputDevice, event: InputEvent, label: string): bool =
+  for binding in settings.bindings:
+    if binding.label == label and binding.device == device.name:
+      return event.tonePress(binding.code, false)
+
 proc isTone(settings: Settings, device: InputDevice, event: InputEvent): bool =
   if settings.bindings.len == 0:
     return event.tonePress(uint16(settings.toneKey), false)
-  for binding in settings.bindings:
-    if binding.label == "START" and binding.device == device.name:
-      return event.tonePress(binding.code, false)
+  settings.bindingPress(device, event, "START")
 
-proc calibrate(settings: var Settings, devices: seq[InputDevice], fb: Framebuffer) =
-  const Labels = ["UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L", "R", "SELECT", "START", "MENU", "VOL-", "VOL+", "L2", "R2"]
+proc calibrate(settings: var Settings, devices: seq[InputDevice], fb: Display) =
+  var labels = @["UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L", "R", "SELECT", "START", "MENU", "VOL-", "VOL+", "L2", "R2"]
+  if settings.touchName.len > 0:
+    labels.add "BACK"
   let started = getMonoTime()
   var
     index = 0
     waitingRelease = false
     candidate: Binding
     message = "PRESS THEN RELEASE EACH BUTTON"
-  while index < Labels.len and not stopping:
+  while index < labels.len and not stopping:
     if (getMonoTime() - started).inSeconds >= settings.seconds:
       raise newException(IOError, "Calibration timed out; profile was not changed")
     var alreadyMapped = false
     for binding in settings.bindings:
-      if binding.label == Labels[index]:
+      if binding.label == labels[index]:
         alreadyMapped = true
     if alreadyMapped:
       inc index
       continue
     for device in devices:
+      if device.touch.enabled:
+        continue
       for event in device.readEvents():
         if waitingRelease:
           continue
@@ -122,7 +196,7 @@ proc calibrate(settings: var Settings, devices: seq[InputDevice], fb: Framebuffe
               sampled.value = event.value
               direction = sampled.axisDirection()
         if direction != 0:
-          candidate = Binding(label: Labels[index], device: device.name,
+          candidate = Binding(label: labels[index], device: device.name,
             kind: event.kind, code: event.code, value: direction)
           var duplicate = false
           for binding in settings.bindings:
@@ -132,7 +206,7 @@ proc calibrate(settings: var Settings, devices: seq[InputDevice], fb: Framebuffe
               message = "ALREADY MAPPED TO " & binding.label
           if not duplicate:
             waitingRelease = true
-            message = "RELEASE " & Labels[index]
+            message = "RELEASE " & labels[index]
     if waitingRelease and not candidate.active(devices):
       settings.bindings.add candidate
       echo "MAPPED ", candidate.label, " device=", candidate.device,
@@ -140,23 +214,29 @@ proc calibrate(settings: var Settings, devices: seq[InputDevice], fb: Framebuffe
       inc index
       waitingRelease = false
       message = "PRESS THEN RELEASE EACH BUTTON"
-    if index < Labels.len:
+    if index < labels.len:
       var canvas = testPattern(fb.width, fb.height, index * 20)
       let scale = max(1, min(fb.width div 240, fb.height div 160))
       canvas.text(20, fb.height div 4, "MAP BUTTONS - " & settings.title, White, max(1, scale - 1))
-      canvas.text(20, fb.height div 4 + 50, "PRESS " & Labels[index], Cyan, scale * 2)
+      canvas.text(20, fb.height div 4 + 50, "PRESS " & labels[index], Cyan, scale * 2)
       canvas.text(20, fb.height div 4 + 120, message, White, max(1, scale - 1))
-      canvas.text(20, fb.height div 4 + 155, $(index + 1) & "/" & $Labels.len, Green, scale)
+      canvas.text(20, fb.height div 4 + 155, $(index + 1) & "/" & $labels.len, Green, scale)
       fb.present(canvas)
     sleep(40)
   if stopping:
     return
   var profile = %*{
     "title": settings.title, "framebuffer": settings.framebuffer,
+    "display": settings.display, "drmDevice": settings.drmDevice,
+    "outputs": settings.outputs, "touchName": settings.touchName,
+    "touchRotation": settings.touchRotation, "sticks": newJArray(),
     "audioDevice": settings.audioDevice, "inputNames": settings.inputNames,
     "rotation": settings.rotation, "toneKey": settings.toneKey,
     "bindings": newJArray()
   }
+  for stick in settings.sticks:
+    profile["sticks"].add %*{"label": stick.label, "device": stick.device,
+      "x": int(stick.x), "y": int(stick.y)}
   for binding in settings.bindings:
     profile["bindings"].add %*{"label": binding.label, "device": binding.device,
       "kind": int(binding.kind), "code": int(binding.code), "value": int(binding.value)}
@@ -173,12 +253,17 @@ proc calibrate(settings: var Settings, devices: seq[InputDevice], fb: Framebuffe
   echo "Calibration saved; starting button and sound test"
 
 proc main() =
-  var settings = parseSettings(commandLineParams())
+  var settings = parseSettings(commandLineParams(), detectDevice())
   if settings.command == "help":
     stdout.write(Help)
     return
   if settings.preview.len > 0:
-    draw(settings, @[], 720, 480, 64, 0).savePpm(settings.preview)
+    let dual = settings.outputs.len > 1
+    draw(settings, @[], if dual: 1024 else: 720, if dual: 768 else: 480, 64, 0).savePpm(settings.preview)
+    if dual:
+      let parts = splitFile(settings.preview)
+      drawTouch(settings, TouchState(), TouchTrace(), 1024, 768, 64).
+        savePpm(parts.dir / (parts.name & "-touch" & parts.ext))
     return
   posix.signal(SIGINT, stopHandler)
   posix.signal(SIGTERM, stopHandler)
@@ -191,23 +276,33 @@ proc main() =
       sleep(20)
     return
   var
-    fb: Framebuffer
+    fb: Display
     devices: seq[InputDevice]
   defer:
     for device in devices:
       device.close()
   if settings.command != "input":
-    fb = openFramebuffer(settings.framebuffer, settings.rotation)
+    fb = openDisplay(settings)
   defer:
     if fb != nil:
       fb.close()
   if fb != nil:
-    echo "Framebuffer: ", fb.describe()
+    for index in 0 ..< fb.count():
+      echo "Display ", index + 1, ": ", fb.describe(index)
   let paths = if settings.inputDevices.len > 0: settings.inputDevices else: inputPaths(settings.inputNames)
   for path in paths:
     let device = openInput(path)
     devices.add device
     echo device.describe()
+    if settings.command == "info":
+      for control in device.controls:
+        echo "  type=", control.kind, " code=", control.code,
+          " value=", control.value, " min=", control.minimum, " max=", control.maximum
+      if device.touch.enabled:
+        var activeTouches = 0
+        for contact in device.touch.contacts:
+          if contact.active: inc activeTouches
+        echo "  Touch slots=", device.touch.contacts.len, " active=", activeTouches
   if settings.command == "info":
     echo "ALSA device: ", settings.audioDevice
     echo "Tone key: ", settings.toneKey
@@ -225,10 +320,14 @@ proc main() =
     toneCount = 0
     comboStarted: MonoTime
     comboHeld = false
+    trace: TouchTrace
   while not stopping and (getMonoTime() - started).inSeconds < settings.seconds:
     for device in devices:
       for event in device.readEvents():
-        echo device.name, " type=", event.kind, " code=", event.code, " value=", event.value
+        if event.kind != EventSync:
+          echo device.name, " type=", event.kind, " code=", event.code, " value=", event.value
+        if settings.bindingPress(device, event, "X"):
+          trace = TouchTrace()
         if settings.command == "test" and settings.isTone(device, event) and
             not settings.namedPressed(devices, "SELECT", 314):
           audio.play()
@@ -245,6 +344,15 @@ proc main() =
     audio.poll()
     if fb != nil:
       fb.present(draw(settings, devices, fb.width, fb.height, tick, audio.completed))
+      if fb.count() > 1:
+        var state: TouchState
+        for device in devices:
+          if device.name == settings.touchName:
+            state = device.touch
+        trace.observe(state, fb.width(1), fb.height(1), settings.touchRotation)
+        for device in devices:
+          device.touch.samples.setLen(0)
+        fb.present(drawTouch(settings, state, trace, fb.width(1), fb.height(1), tick), 1)
     inc tick
     sleep(80)
   echo "Completed tone playbacks: ", audio.completed, "; requests: ", toneCount

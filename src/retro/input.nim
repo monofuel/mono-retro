@@ -1,6 +1,6 @@
 import
   std/[os, posix, strformat, strutils],
-  ./framebuffer
+  ./[framebuffer, touch]
 
 type
   InputEvent* {.importc: "struct input_event", header: "<linux/input.h>", bycopy.} = object
@@ -12,7 +12,7 @@ type
     value, minimum, maximum, fuzz, flat, resolution: int32
   Control* = object
     kind*, code*: uint16
-    value*, minimum*, maximum*: int32
+    value*, minimum*, maximum*, flat*: int32
     seen*, negativeSeen*, positiveSeen*: bool
   Binding* = object
     label*, device*: string
@@ -22,6 +22,7 @@ type
     path*, name*: string
     fd*: cint
     controls*: seq[Control]
+    touch*: TouchState
     dropped: bool
 
 const
@@ -37,6 +38,7 @@ proc getName(length: cint): culong {.importc: "EVIOCGNAME", header: "<linux/inpu
 proc getBits(kind, length: cint): culong {.importc: "EVIOCGBIT", header: "<linux/input.h>".}
 proc getKeys(length: cint): culong {.importc: "EVIOCGKEY", header: "<linux/input.h>".}
 proc getAxis(code: cint): culong {.importc: "EVIOCGABS", header: "<linux/input.h>".}
+proc getSlots(length: cint): culong {.importc: "EVIOCGMTSLOTS", header: "<linux/input.h>".}
 
 proc bitSet(bits: openArray[byte], code: int): bool =
   (bits[code div 8] and byte(1 shl (code mod 8))) != 0
@@ -55,6 +57,63 @@ proc syncState(device: InputDevice) =
       control.value = axis.value
       control.minimum = axis.minimum
       control.maximum = axis.maximum
+      control.flat = axis.flat
+  if device.touch.enabled:
+    if device.touch.multitouch:
+      for control in device.controls:
+        if control.kind == EventAbsolute and control.code == SlotCode:
+          device.touch.slot = int(control.value) - device.touch.slotMinimum
+      for code in [TrackingCode, PositionXCode, PositionYCode]:
+        var values = newSeq[int32](device.touch.pending.len + 1)
+        values[0] = int32(code)
+        if deviceIoctl(device.fd, getSlots(cint(values.len * sizeof(int32))), addr values[0]) < 0:
+          raiseOSError(osLastError(), "Resynchronizing touch slots")
+        for index in 0 ..< device.touch.pending.len:
+          case code
+          of TrackingCode:
+            device.touch.pending[index].id = values[index + 1]
+            device.touch.pending[index].active = values[index + 1] >= 0
+          of PositionXCode: device.touch.pending[index].x = values[index + 1]
+          of PositionYCode: device.touch.pending[index].y = values[index + 1]
+          else: discard
+    else:
+      for control in device.controls:
+        if control.kind == EventAbsolute and control.code in [0'u16, 1'u16]:
+          device.touch.apply(control.kind, control.code, control.value)
+        elif control.kind == EventKey and control.code == TouchCode:
+          device.touch.apply(control.kind, control.code, control.value)
+    device.touch.commit()
+
+proc configureTouch*(device: InputDevice) =
+  ## Configure protocol-B or legacy touch from the device's reported capabilities.
+  var
+    slots = 0
+    hasTouch = false
+    hasX = false
+    hasY = false
+  for control in device.controls:
+    if control.kind == EventAbsolute and control.code == SlotCode:
+      slots = int(control.maximum - control.minimum + 1)
+      device.touch.slotMinimum = int(control.minimum)
+    elif control.kind == EventKey and control.code == TouchCode:
+      hasTouch = true
+  device.touch.multitouch = slots > 0
+  for control in device.controls:
+    if control.kind == EventAbsolute:
+      if control.code == (if slots > 0: PositionXCode else: 0'u16):
+        device.touch.minimumX = control.minimum
+        device.touch.maximumX = control.maximum
+        hasX = control.maximum > control.minimum
+      elif control.code == (if slots > 0: PositionYCode else: 1'u16):
+        device.touch.minimumY = control.minimum
+        device.touch.maximumY = control.maximum
+        hasY = control.maximum > control.minimum
+  device.touch.enabled = hasX and hasY and (slots > 0 or hasTouch)
+  if device.touch.enabled:
+    if slots > MaximumTouchSlots:
+      raise newException(IOError, "Touch device exceeds supported slot count")
+    device.touch.pending = newSeq[TouchContact](max(1, slots))
+    device.touch.clear()
 
 proc openInput*(path: string): InputDevice =
   result = InputDevice(path: path, fd: posix.open(path.cstring, O_RDONLY or O_NONBLOCK or O_CLOEXEC))
@@ -78,9 +137,24 @@ proc openInput*(path: string): InputDevice =
       if bitSet(axes, code):
         result.controls.add Control(kind: EventAbsolute, code: uint16(code))
     result.syncState()
+    result.configureTouch()
+    if result.touch.enabled:
+      result.syncState()
   except:
     discard posix.close(result.fd)
     raise
+
+proc axisDirection*(control: Control): int32 =
+  if control.code in 16'u16..23'u16:
+    if control.value < 0: return -1
+    if control.value > 0: return 1
+    return 0
+  let
+    center = (float(control.minimum) + float(control.maximum)) / 2
+    threshold = max(0.25, (float(control.maximum) - float(control.minimum)) / 4)
+  if float(control.value) < center - threshold: -1
+  elif float(control.value) > center + threshold: 1
+  else: 0
 
 proc applyEvent*(controls: var seq[Control], event: InputEvent) =
   for control in controls.mitems:
@@ -89,20 +163,27 @@ proc applyEvent*(controls: var seq[Control], event: InputEvent) =
       if event.kind != EventKey or event.value != 0:
         control.seen = true
       if event.kind == EventAbsolute:
-        let
-          center = (float(control.minimum) + float(control.maximum)) / 2
-          threshold = max(0.25, (float(control.maximum) - float(control.minimum)) / 4)
-        if float(control.value) < center - threshold: control.negativeSeen = true
-        if float(control.value) > center + threshold: control.positiveSeen = true
+        let direction = control.axisDirection()
+        if direction < 0: control.negativeSeen = true
+        if direction > 0: control.positiveSeen = true
       return
 
-proc axisDirection*(control: Control): int32 =
+proc axisPosition*(control: Control): float =
+  ## Scale raw analog values linearly without a deadzone or smoothing.
+  if control.maximum <= control.minimum:
+    raise newException(ValueError, "Axis coordinate range is invalid")
   let
     center = (float(control.minimum) + float(control.maximum)) / 2
-    threshold = max(0.25, (float(control.maximum) - float(control.minimum)) / 4)
-  if float(control.value) < center - threshold: -1
-  elif float(control.value) > center + threshold: 1
-  else: 0
+    halfRange = (float(control.maximum) - float(control.minimum)) / 2
+    offset = float(control.value) - center
+  max(-1.0, min(1.0, offset / halfRange))
+
+proc axis*(device: InputDevice, code: uint16): Control =
+  ## Find a configured absolute axis and reject a mismatched profile.
+  for control in device.controls:
+    if control.kind == EventAbsolute and control.code == code:
+      return control
+  raise newException(ValueError, "Missing axis " & $code & " on " & device.name)
 
 proc active*(binding: Binding, devices: seq[InputDevice]): bool =
   for device in devices:
@@ -139,12 +220,17 @@ proc readEvents*(device: InputDevice): seq[InputEvent] =
       raise newException(IOError, "Incomplete input event or disconnected device: " & device.path)
     if event.kind == EventSync and event.code == SyncDropped:
       device.dropped = true
+      device.touch.clear()
     elif device.dropped:
       if event.kind == EventSync and event.code == 0:
         device.syncState()
         device.dropped = false
     elif event.kind in [EventKey, EventAbsolute]:
       device.controls.applyEvent(event)
+      device.touch.apply(event.kind, event.code, event.value)
+      result.add event
+    elif event.kind == EventSync and event.code == 0:
+      device.touch.commit()
       result.add event
 
 proc inputPaths*(names: seq[string]): seq[string] =
