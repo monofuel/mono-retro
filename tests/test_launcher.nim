@@ -1,14 +1,13 @@
 import
-  std/[json, monotimes, os, times],
+  std/[json, monotimes, os, osproc, times],
   pixie,
-  retro/[launcherui, menu, settings, systeminfo, testerprocess]
+  retro/[launcherui, menu, powercontrol, settings, systeminfo, testerprocess]
 
 block:
   var state = MenuState(armed: false)
   doAssert state.handle(Open, false) == NoAction
   state.armed = true
   doAssert state.handle(Open, false) == LaunchTester
-  discard state.handle(Next, false)
   discard state.handle(Next, false)
   doAssert state.selected == 1
   doAssert state.handle(Open, false) == NoAction and state.info
@@ -18,6 +17,61 @@ block:
   doAssert not state.info and state.scroll == 0
   doAssert state.handle(Back, false) == NoAction
   doAssert state.handle(Back, true) == QuitLauncher
+
+block:
+  for (index, action) in [(2, RebootSystem), (3, ShutdownSystem)]:
+    var state = MenuState(selected: index, armed: true)
+    doAssert state.handle(Open, false) == NoAction
+    doAssert state.confirmation == action and not state.confirmYes
+    doAssert not state.armed
+    discard state.handle(Next, false)
+    doAssert state.handle(Open, false) == NoAction
+    state.armed = true
+    discard state.handle(Previous, false)
+    doAssert state.handle(Open, false) == NoAction
+    doAssert state.confirmation == NoAction
+    discard state.handle(Open, false)
+    doAssert state.handle(Back, true) == NoAction
+    doAssert state.confirmation == NoAction
+    state.armed = true
+    discard state.handle(Open, false)
+    discard state.handle(Next, false)
+    state.armed = true
+    doAssert state.handle(Open, false) == action
+    state.busy = true
+    doAssert state.handle(Back, true) == NoAction
+  doAssert powerBlockReason(PowerStatus(selected: "axp2202-battery", external: true)).len > 0
+  doAssert powerBlockReason(PowerStatus(selected: "axp2202-battery")).len == 0
+  doAssert powerBlockReason(PowerStatus(selected: "cw2015-battery", external: true)).len == 0
+
+block:
+  let
+    fixture = getTempDir() / ("mono-retro-power-commands-" & $getCurrentProcessId())
+    originalPath = getEnv("PATH")
+    marker = fixture / "requests"
+  createDir(fixture)
+  defer:
+    putEnv("PATH", originalPath)
+    removeDir(fixture)
+  for command in ["reboot", "poweroff"]:
+    writeFile(fixture / command, "#!/bin/sh\nprintf '" & command & "\\n' >> '" & marker & "'\n")
+    setFilePermissions(fixture / command, {fpUserRead, fpUserWrite, fpUserExec})
+  putEnv("PATH", fixture)
+  doAssert findExe("reboot") == fixture / "reboot"
+  doAssert findExe("poweroff") == fixture / "poweroff"
+  for action in [RebootSystem, ShutdownSystem]:
+    var request = requestPower(action)
+    discard request.waitForExit()
+    checkPowerRequest(request, action)
+    doAssert request == nil
+  doAssert readFile(marker) == "reboot\npoweroff\n"
+  writeFile(fixture / "poweroff", "#!/bin/sh\nexit 3\n")
+  var rejected = false
+  var request = requestPower(ShutdownSystem)
+  discard request.waitForExit()
+  try: checkPowerRequest(request, ShutdownSystem)
+  except IOError: rejected = true
+  doAssert rejected
 
 block:
   let fixture = getTempDir() / ("mono-retro-power-" & $getCurrentProcessId())
@@ -73,6 +127,10 @@ block:
     doAssert rendered.image.width == width and rendered.image.height == height
     doAssert areas.action.contains(vec2(areas.action.x.float32 + 1, areas.action.y.float32 + 1))
     doAssert areas.action.y + areas.action.height <= height
+    doAssert areas.rows[^1].y + areas.rows[^1].height < areas.action.y
+    doAssert not areas.cancel.contains(vec2(areas.confirm.x.float32 + 1, areas.confirm.y.float32 + 1))
+    doAssert ui.render(MenuState(confirmation: ShutdownSystem), "Test", PowerStatus(),
+      @[], width, height, role).image.height == height
   var lines: seq[string]
   for index in 0 ..< 100: lines.add "Long information page " & $index
   doAssert ui.render(MenuState(info: true), "Test", PowerStatus(), lines,

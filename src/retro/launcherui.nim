@@ -1,6 +1,6 @@
 import
   pixie,
-  ./[menu, pattern, systeminfo]
+  ./[menu, pattern, powercontrol, systeminfo]
 
 type
   ScreenRole* = enum
@@ -8,8 +8,8 @@ type
   UiRect* = object
     x*, y*, width*, height*: int
   MenuLayout* = object
-    rows*: array[2, UiRect]
-    body*, action*: UiRect
+    rows*: array[MenuLabels.len, UiRect]
+    body*, action*, cancel*, confirm*: UiRect
   LauncherUi* = ref object
     font: Font
 
@@ -26,6 +26,8 @@ const
   ToolbarHeight = 64
   RowHeight = 68
   ButtonHeight = 52
+  RowGap = 8
+  ErrorSpace = 48
 
 proc newLauncherUi*(): LauncherUi =
   ## Parse the embedded, licensed font once for the lifetime of the UI.
@@ -40,11 +42,19 @@ proc contains*(area: UiRect, point: Vec2): bool =
 proc layout*(width, height: int, role: ScreenRole): MenuLayout =
   ## Keep controls inside the drawable area on all three supported displays.
   let top = if role == BottomScreen: Margin else: ToolbarHeight + Margin
-  for index in 0 .. 1:
-    result.rows[index] = UiRect(x: Margin, y: top + 42 + index * (RowHeight + 12),
-      width: max(1, width - Margin * 2), height: RowHeight)
   result.action = UiRect(x: Margin, y: height - ButtonHeight - 32,
     width: max(1, width - Margin * 2), height: ButtonHeight)
+  let
+    firstRow = top + 42
+    rowHeight = max(32, min(RowHeight,
+      (result.action.y - firstRow - ErrorSpace - RowGap * (MenuLabels.len - 1)) div MenuLabels.len))
+  for index in 0 .. MenuLabels.high:
+    result.rows[index] = UiRect(x: Margin, y: firstRow + index * (rowHeight + RowGap),
+      width: max(1, width - Margin * 2), height: rowHeight)
+  result.cancel = result.action
+  result.cancel.width = max(1, (result.action.width - RowGap) div 2)
+  result.confirm = UiRect(x: result.cancel.x + result.cancel.width + RowGap,
+    y: result.cancel.y, width: result.cancel.width, height: result.cancel.height)
   result.body = UiRect(x: Margin, y: top + 44, width: max(1, width - Margin * 2),
     height: max(1, result.action.y - top - 60))
 
@@ -79,7 +89,8 @@ proc render*(ui: LauncherUi, state: MenuState, title: string, power: PowerStatus
     image = result.image
     areas = layout(width, height, role)
     showInfo = state.info and role != TopScreen
-    showMenu = role != BottomScreen and not showInfo
+    confirming = state.confirmation != NoAction
+    showMenu = role != BottomScreen and not showInfo and (not confirming or role == TopScreen)
     top = if role == BottomScreen: Margin else: ToolbarHeight + Margin
   if role != BottomScreen: ui.toolbar(image, title, power)
   if showMenu:
@@ -88,9 +99,28 @@ proc render*(ui: LauncherUi, state: MenuState, title: string, power: PowerStatus
       let area = areas.rows[index]
       image.rect(area.x, area.y, area.width, area.height,
         if state.selected == index: SelectedColor else: PanelColor)
-      ui.label(image, text, area.x + 20, area.y + 21, 24)
+      ui.label(image, text, area.x + 20, area.y + (area.height - 28) div 2, 24)
     ui.label(image, "A / Enter: Open     B / Escape: Back", Margin, height - 25, 16, MutedColor)
-  if showInfo:
+  if confirming and role != TopScreen:
+    let
+      reboot = state.confirmation == RebootSystem
+      heading = if reboot: "Reboot this device?" else: "Shut down this device?"
+      blocked = power.powerBlockReason()
+    ui.label(image, if state.busy:
+      (if reboot: "Rebooting…" else: "Shutting down…") else: heading, Margin, top, 30)
+    ui.label(image, if blocked.len > 0: blocked else:
+      "Choose Cancel to return to the menu.", Margin, top + 65, 20, MutedColor)
+    if not state.busy:
+      let
+        cancel = areas.cancel
+        confirm = areas.confirm
+      image.rect(cancel.x, cancel.y, cancel.width, cancel.height,
+        if not state.confirmYes: SelectedColor else: PanelColor)
+      image.rect(confirm.x, confirm.y, confirm.width, confirm.height,
+        if state.confirmYes and blocked.len == 0: SelectedColor else: PanelColor)
+      ui.label(image, "Cancel", cancel.x + 20, cancel.y + 15, 22)
+      ui.label(image, if reboot: "Reboot" else: "Shut Down", confirm.x + 20, confirm.y + 15, 22)
+  elif showInfo:
     ui.label(image, "System Info", Margin, top, 28)
     let content = newCanvas(areas.body.width, areas.body.height)
     content.fill(BackgroundColor)
@@ -109,11 +139,13 @@ proc render*(ui: LauncherUi, state: MenuState, title: string, power: PowerStatus
     image.draw(content, translate(vec2(areas.body.x.float32, areas.body.y.float32)))
   elif role == BottomScreen:
     ui.label(image, MenuLabels[state.selected], Margin, top, 30)
-    let description = if state.selected == 0:
-      "Check the screens, controls, touch and sound.\n\nHold Select + Start in the tester to return here."
-      else: "Show the kernel, operating system, battery gauges\nand local network addresses."
+    let description = case state.selected
+      of 0: "Check the screens, controls, touch and sound.\n\nHold Select + Start in the tester to return here."
+      of 1: "Show the kernel, operating system, battery gauges\nand local network addresses."
+      of 2: "Restart the device. You will be asked to confirm."
+      else: "Power off the device. You will be asked to confirm."
     ui.label(image, description, Margin, top + 70, 24, MutedColor)
-  if role != TopScreen:
+  if role != TopScreen and not confirming:
     let area = areas.action
     image.rect(area.x, area.y, area.width, area.height, SelectedColor)
     ui.label(image, if showInfo: "Back" else: "Open " & MenuLabels[state.selected],

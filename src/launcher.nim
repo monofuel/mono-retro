@@ -1,7 +1,7 @@
 import
-  std/[monotimes, os, parseopt, posix, strutils, times],
+  std/[monotimes, os, osproc, parseopt, posix, strutils, times],
   paddy, pixie, windy,
-  retro/[anbernic, display, gamepad, input, launcherui, menu, settings,
+  retro/[anbernic, display, gamepad, input, launcherui, menu, powercontrol, settings,
     systeminfo, testerprocess]
 
 const
@@ -12,7 +12,7 @@ const
   StickRelease = 0.3'f32
   WheelNotch = 10'f32
   Help = """Usage: mono-retro [--tester:PATH] [--seconds:N] [device/display options]
-Two entries: Hardware Test and System Info.
+Hardware Test, System Info, Reboot and Shut Down.
 Use arrows/D-pad/stick, A/Enter to open, and B/Back/Escape to return.
 The tester's Select+Start exit returns to the launcher.
 Device/display/profile options match mono-retro-hwtest.
@@ -65,15 +65,21 @@ proc main() =
     pointerScreen = -1
     pointerStart, pointerLast: Vec2
     pointerButton = false
+    pointerCancel = false
     mouseHeld = false
     sizes: seq[IVec2]
+    pendingPower = NoAction
+    requestedPower = NoAction
+    powerRequest: Process
   defer:
+    if powerRequest != nil: powerRequest.close()
     closeGamepads()
     for device in backInputs: device.close()
     if screen != nil: screen.close()
 
   proc pointerEvent(phase: TouchPhase, id: int32, point: Vec2, index: int) =
     ## Treat the first finger as a button tap or a direct information scroll.
+    if state.busy: return
     let
       role = if screen.count() > 1:
           (if index == 0: TopScreen else: BottomScreen)
@@ -86,8 +92,13 @@ proc main() =
       pointerScreen = index
       pointerStart = point
       pointerLast = point
-      pointerButton = role != TopScreen and areas.action.contains(point)
-      if not state.info and role != BottomScreen:
+      pointerCancel = state.confirmation != NoAction and areas.cancel.contains(point)
+      pointerButton = role != TopScreen and (if state.confirmation == NoAction:
+        areas.action.contains(point) else: pointerCancel or areas.confirm.contains(point))
+      if pointerButton and state.confirmation != NoAction:
+        state.confirmYes = not pointerCancel
+        dirty = true
+      if not state.info and state.confirmation == NoAction and role != BottomScreen:
         for row, area in areas.rows:
           if area.contains(point):
             state.selected = row
@@ -100,9 +111,11 @@ proc main() =
       pointerLast = point
     of TouchEnd, TouchCancel:
       if id != pointerId or index != pointerScreen: return
-      if phase == TouchEnd and pointerButton and areas.action.contains(point) and
+      let releaseArea = if state.confirmation == NoAction: areas.action
+        elif pointerCancel: areas.cancel else: areas.confirm
+      if phase == TouchEnd and pointerButton and releaseArea.contains(point) and
           abs(point.y - pointerStart.y) < 24:
-        pending.add (if state.info: Back else: Open)
+        pending.add (if state.info or pointerCancel: Back else: Open)
       pointerId = -1
 
   proc openScreens() =
@@ -140,6 +153,9 @@ proc main() =
         pad.button(GamepadSelect) or pad.button(GamepadStart)
       if pad.buttonPressed(GamepadUp): pending.add Previous
       if pad.buttonPressed(GamepadDown): pending.add Next
+      if state.confirmation != NoAction:
+        if pad.buttonPressed(GamepadLeft): pending.add Previous
+        if pad.buttonPressed(GamepadRight): pending.add Next
       if pad.buttonPressed(activate): pending.add Open
       if pad.buttonPressed(cancel): pending.add Back
       if abs(stick) < StickRelease: stickReady = true
@@ -155,6 +171,9 @@ proc main() =
         activationHeld = activationHeld or window.buttonDown[KeyEnter] or window.buttonDown[MouseLeft]
         if window.buttonPressed[KeyUp]: pending.add Previous
         if window.buttonPressed[KeyDown]: pending.add Next
+        if state.confirmation != NoAction:
+          if window.buttonPressed[KeyLeft]: pending.add Previous
+          if window.buttonPressed[KeyRight]: pending.add Next
         if window.buttonPressed[KeyEnter]: pending.add Open
         if window.buttonPressed[KeyEscape]: pending.add Back
         if window.scrollDelta.y != 0 and state.info:
@@ -175,6 +194,13 @@ proc main() =
       dirty = true
     pending.setLen(0)
     if action == QuitLauncher: break
+    if action in {RebootSystem, ShutdownSystem}:
+      power = readPower(settings.batterySupply)
+      state.error = power.powerBlockReason()
+      if state.error.len == 0:
+        state.busy = true
+        pendingPower = action
+      dirty = true
     if action == LaunchTester:
       if not fileExists(tester):
         state.error = "Tester not found: " & tester
@@ -226,6 +252,18 @@ proc main() =
       let bounded = min(state.scroll, maxScroll)
       dirty = state.scroll != bounded
       state.scroll = bounded
+    try:
+      if pendingPower != NoAction:
+        requestedPower = pendingPower
+        pendingPower = NoAction
+        powerRequest = requestPower(requestedPower)
+      checkPowerRequest(powerRequest, requestedPower)
+    except OSError, IOError:
+      state.busy = false
+      state.confirmation = NoAction
+      state.error = getCurrentExceptionMsg()
+      stderr.writeLine(state.error)
+      dirty = true
     sleep(InputIntervalMs)
 
 when isMainModule:

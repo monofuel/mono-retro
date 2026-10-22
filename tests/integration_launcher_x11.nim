@@ -50,9 +50,19 @@ proc main() =
     fixture = getTempDir() / ("mono-retro-x11-" & $getCurrentProcessId())
     tester = fixture / "tester"
     marker = fixture / "launches"
+    powerMarker = fixture / "power-requests"
+    originalPath = getEnv("PATH")
   doAssert testDisplay.len > 0, "Set MONO_RETRO_TEST_DISPLAY to an isolated Xvfb display."
   createDir(fixture)
-  defer: removeDir(fixture)
+  defer:
+    putEnv("PATH", originalPath)
+    removeDir(fixture)
+  for command in ["reboot", "poweroff"]:
+    writeFile(fixture / command, "#!/bin/sh\nprintf '" & command & "\\n' >> " & quoteShell(powerMarker) & "\n")
+    setFilePermissions(fixture / command, {fpUserRead, fpUserWrite, fpUserExec})
+  putEnv("PATH", fixture & ":" & originalPath)
+  doAssert findExe("reboot") == fixture / "reboot"
+  doAssert findExe("poweroff") == fixture / "poweroff"
   writeFile(tester, "#!/bin/sh\nprintf x >> " & quoteShell(marker) & "\nexit 7\n")
   setFilePermissions(tester, {fpUserRead, fpUserWrite, fpUserExec})
   putEnv("DISPLAY", testDisplay)
@@ -77,7 +87,21 @@ proc main() =
   doAssert process.running()
   press(d, window, 0xff1b)
   doAssert process.running()
+  press(d, window, 0xff54)
+  press(d, window, 0xff0d)
+  press(d, window, 0xff0d)
+  doAssert process.running()
+  press(d, window, 0xff54)
+  press(d, window, 0xff0d)
   press(d, window, 0xff1b)
+  doAssert process.running()
+  doAssert not fileExists(powerMarker)
+  press(d, window, 0xff0d)
+  press(d, window, 0xff53)
+  press(d, window, 0xff0d)
+  doAssert readFile(powerMarker) == "poweroff\n"
+  doAssert process.running()
+  process.terminate()
   doAssert process.waitForExit(5000) == 0
 
 main()

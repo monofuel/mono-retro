@@ -7,7 +7,7 @@ monobake and monorig.
 
 ## Launcher
 
-`mono-retro` has two entries: Hardware Test and System Info. It uses Windy,
+`mono-retro` has Hardware Test, System Info, Reboot and Shut Down entries. It uses Windy,
 Pixie and Paddy, sharing the tester's device profiles and app-owned mappings.
 The primary screen has a battery percentage/status toolbar. On DS Plus the
 menu stays above while details, touch actions and System Info appear below.
@@ -16,6 +16,13 @@ Use D-pad/stick or keyboard arrows to select, physical A/Enter to open, and
 B/Back/Escape to return. The information page scrolls with D-pad/stick, mouse
 wheel or a bottom-screen drag. Mouse clicks select rows; the Open button
 activates the selection. Escape at the desktop menu closes the launcher.
+
+Reboot and Shut Down open a confirmation with Cancel selected initially. Use
+D-pad/stick/arrows to choose, then A/Enter, or touch/click the confirmation
+button. B/Back/Escape cancels. Power requests use normal OS commands, without
+privilege escalation. RG SP power controls require unplugging its charger to
+avoid the vendor kernel's known shutdown quirk. Failed requests remain visible
+in the menu; an accepted request shows progress until the OS stops the service.
 
 Hardware Test releases the launcher's displays and input handles before
 starting the sibling `mono-retro-hwtest` process. Hold Select+Start in the
