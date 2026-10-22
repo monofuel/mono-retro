@@ -1,5 +1,6 @@
 {
   "title": "RG DS PLUS",
+  "batterySupply": "cw2015-battery",
   "display": "drm",
   "drmDevice": "/dev/dri/card0",
   "outputs": ["DSI-1", "DSI-2"],

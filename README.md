@@ -5,6 +5,44 @@ display and multitouch, Paddy for gamepads, raw evdev for diagnostics, and ALSA
 for sound. See [Windy builds and backend selection](README-windy.md). Images and machine configuration belong in
 monobake and monorig.
 
+## Launcher
+
+`mono-retro` has two entries: Hardware Test and System Info. It uses Windy,
+Pixie and Paddy, sharing the tester's device profiles and app-owned mappings.
+The primary screen has a battery percentage/status toolbar. On DS Plus the
+menu stays above while details, touch actions and System Info appear below.
+
+Use D-pad/stick or keyboard arrows to select, physical A/Enter to open, and
+B/Back/Escape to return. The information page scrolls with D-pad/stick, mouse
+wheel or a bottom-screen drag. Mouse clicks select rows; the Open button
+activates the selection. Escape at the desktop menu closes the launcher.
+
+Hardware Test releases the launcher's displays and input handles before
+starting the sibling `mono-retro-hwtest` process. Hold Select+Start in the
+tester to return to the menu. `--tester:PATH` selects another executable.
+There is no battery overlay over the separate diagnostic application.
+
+Build both applications with `make launcher-desktop`, or cross-build with
+`make launcher-handhelds`. The latter creates `build/mono-retro-arm64` and
+`build/mono-retro-hwtest-arm64`. Install them as `/usr/local/bin/mono-retro`
+and `/usr/local/bin/mono-retro-hwtest`. Existing tester build targets remain.
+Build desktop and cross targets sequentially.
+
+The font is embedded; no system font installation is needed. Battery sources
+are profile-owned (`batterySupply`): axp2202 on SP and cw2015 on DS Plus.
+System Info shows all reported gauges separately. Telemetry reads local
+`/proc`, `/sys`, OS-release and `ip -j address show`; no network service,
+credentials or router access is involved. Invalid readings remain unavailable.
+
+The secret-free monorig tool `tools/handheld_launcher.nim rg-sp` (or
+`rg-ds-plus`) emits the guarded OpenRC installation script. Run it through
+the existing SSH connection using `sudo bash -s`. It enables the launcher in
+the default runlevel, independently of networking. Stop/start it with
+`sudo rc-service mono-retro stop` / `start`; logs are `/var/log/mono-retro.log`.
+Before deployment, preserve existing binaries and service files. To roll back,
+stop/disable the service and restore those saved files. This does not rebuild
+the disk image or change Wi-Fi configuration.
+
 ## Build and tests
 
 Requires Nim 2.x, a C compiler, Linux development headers, libudev, libevdev

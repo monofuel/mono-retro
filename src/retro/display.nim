@@ -82,10 +82,15 @@ proc count*(display: Display): int = display.windows.len
 proc width*(display: Display, index = 0): int = int(display.windows[index].framebufferSize.x)
 proc height*(display: Display, index = 0): int = int(display.windows[index].framebufferSize.y)
 
-proc poll*(display: Display): bool =
+proc window*(display: Display, index = 0): Window =
+  ## Access a screen's public Windy input interface.
+  display.windows[index]
+
+proc poll*(display: Display, escapeCloses = true): bool =
   pollEvents()
   for window in display.windows:
-    if window.closeRequested or window.closed or window.buttonPressed[KeyEscape]:
+    if window.closeRequested or window.closed or
+        (escapeCloses and window.buttonPressed[KeyEscape]):
       return false
   true
 

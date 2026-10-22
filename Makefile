@@ -1,12 +1,15 @@
 .PHONY: check test test-audio build arm64
 check:
 	nim check src/hwtest.nim
+	nim check src/launcher.nim
 	nim check tests/test_hardware.nim
 	nim check tests/test_gamepad.nim
 	nim check tests/test_audio_stream.nim
+	nim check tests/test_launcher.nim
 test:
 	nim r tests/test_hardware.nim
 	nim r tests/test_gamepad.nim
+	nim r tests/test_launcher.nim
 test-audio:
 	nim r tests/test_audio_stream.nim
 build:
@@ -35,3 +38,15 @@ combined:
 combined-arm64:
 	mkdir -p build
 	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=x11,fbdev,drm nim c -o:build/hwtest-combined-arm64 src/hwtest.nim
+
+.PHONY: launcher-desktop launcher-handhelds
+launcher-desktop: desktop
+	MONO_RETRO_BACKENDS=x11 nim c -o:build/mono-retro src/launcher.nim
+	cp build/hwtest-desktop build/mono-retro-hwtest
+launcher-handhelds: handhelds
+	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=fbdev,drm nim c -o:build/mono-retro-arm64 src/launcher.nim
+	cp build/hwtest-handhelds build/mono-retro-hwtest-arm64
+
+.PHONY: test-launcher-x11
+test-launcher-x11: launcher-desktop
+	nim r tests/integration_launcher_x11.nim

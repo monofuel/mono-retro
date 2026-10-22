@@ -1,5 +1,6 @@
 {
   "title": "RG SP",
+  "batterySupply": "axp2202-battery",
   "display": "fbdev",
   "framebuffer": "/dev/fb0",
   "audioDevice": "mono_retro_test",

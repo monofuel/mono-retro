@@ -10,7 +10,7 @@ type
     x*, y*: uint16
   Settings* = object
     title*, framebuffer*, audioDevice*, preview*, command*, saveProfile*: string
-    display*, drmDevice*, touchName*, gamepad*: string
+    display*, drmDevice*, touchName*, gamepad*, batterySupply*: string
     outputs*: seq[string]
     sticks*: seq[StickBinding]
     inputNames*, inputDevices*: seq[string]
@@ -66,6 +66,7 @@ proc applyProfile*(settings: var Settings, profile: JsonNode) =
       settings.outputs = @[]
       for output in value: settings.outputs.add output.getStr()
     of "touchName": settings.touchName = value.getStr()
+    of "batterySupply": settings.batterySupply = value.getStr()
     of "touchRotation": settings.touchRotation = value.getInt()
     of "sticks":
       settings.sticks = @[]
