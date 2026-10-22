@@ -1,12 +1,14 @@
 import
   std/[json, monotimes, os, posix, strformat, times],
-  retro/[audio, display, input, pattern, settings, touch]
+  paddy,
+  retro/[audio, display, gamepad, input, pattern, settings, touch]
 
 const
   Help = """Usage: hwtest [test|info|input|audio|calibrate] [options]
   --profile:PATH    Device JSON profile
   --device:NAME     auto (default), rg-sp, rg-ds-plus, generic
-  --display:NAME    auto (default), fbdev, drm
+  --gamepad:NAME    paddy (default) or raw evdev comparison
+  --display:NAME    auto (default), x11, fbdev, drm
   --drm:PATH        DRM device (default /dev/dri/card0)
   --output:NAME     DRM connector; repeat in top/bottom order
   --touch-rotate:N  Touch rotation: 0, 90, 180, 270
@@ -29,14 +31,15 @@ var stopping = false
 proc stopHandler(signal: cint) {.noconv.} =
   stopping = true
 
-proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, tones: int): Canvas =
+proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, tones: int,
+    monitor = GamepadMonitor()): Canvas =
   result = testPattern(width, height, tick)
   let
     margin = max(8, width div 60)
     scale = max(1, min(width div 300, height div 200))
     textHeight = 9 * scale
     top = max(20, height div 5) + margin
-    title = "MONO RETRO - " & settings.title
+    title = "MONO RETRO - " & settings.title & " - " & settings.gamepad
   result.text(margin, top, title, White, scale)
   result.text(margin, top + textHeight, "PRESS ALL BUTTONS - GREEN MEANS SEEN", Cyan, scale)
   var
@@ -50,7 +53,11 @@ proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, to
   var badges: seq[tuple[label: string, active, seen: bool]]
   if settings.bindings.len > 0:
     for binding in settings.bindings:
-      badges.add (binding.label, binding.active(devices), binding.observed(devices))
+      if settings.gamepad == "paddy" and binding.usesPaddy():
+        badges.add (binding.label, monitor.active(binding), monitor.observed(binding))
+      else:
+        let label = binding.label & (if settings.gamepad == "paddy": " RAW" else: "")
+        badges.add (label, binding.active(devices), binding.observed(devices))
   else:
     for deviceIndex, device in devices:
       for control in device.controls:
@@ -70,7 +77,7 @@ proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, to
   if settings.sticks.len > 0:
     let
       stickTop = top + textHeight * 2 + ((badges.len + columns - 1) div columns) * cellHeight + margin
-      size = min(150, max(40, (height - stickTop - textHeight * 6 - 30)))
+      size = min(150, max(40, (height - stickTop - textHeight * 7 - 30)))
     for stickIndex, stick in settings.sticks:
       let
         left = margin + stickIndex * (width - margin * 2) div settings.sticks.len
@@ -89,9 +96,21 @@ proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, to
             values = &"X {xAxis.value} Y {yAxis.value}"
           result.rect(left + x - 3, stickTop + textHeight + y - 3, 7, 7, Cyan)
           result.text(left, stickTop + textHeight + size + 5, values, Green, max(1, scale - 1))
+      if settings.gamepad == "paddy":
+        let
+          xValue = monitor.axisPosition(stick.device, GamepadLStickX)
+          yValue = monitor.axisPosition(stick.device, GamepadLStickY)
+          x = int((xValue + 1) * float(size - 1) / 2)
+          y = int((1 - yValue) * float(size - 1) / 2)
+          values = &"MAPPED X {xValue:.2f} Y {yValue:.2f}"
+        result.rect(left + x - 2, stickTop + textHeight + y - 2, 5, 5, White)
+        result.text(left, stickTop + textHeight + size + 5 + textHeight, values, White, max(1, scale - 1))
+        result.text(left + size + 12, stickTop + textHeight, "WHITE: MAPPED", White, max(1, scale - 1))
+        result.text(left + size + 12, stickTop + textHeight * 2, "CYAN: RAW", Cyan, max(1, scale - 1))
   let
     footer = height - 28 - textHeight * 3
-    summary = &"SEEN {seen}/{index} - TONES {tones}"
+    summary = &"SEEN {seen}/{index} - TONES {tones}" &
+      (if settings.gamepad == "paddy": " - PADS " & $monitor.pads.len else: "")
     instructions = if index > columns * rows: "MORE CONTROLS IN SSH LOG" else: "START: TONE - HOLD SELECT+START 2S: EXIT"
   result.text(margin, footer, summary, Green, scale)
   result.text(margin, footer + textHeight, instructions, White, scale)
@@ -124,7 +143,7 @@ proc drawTouch(settings: Settings, state: TouchState, trace: TouchTrace,
   for contact in state.contacts:
     if contact.active:
       let
-        point = state.touchPoint(contact, width, height, settings.touchRotation)
+        point = state.touchPoint(contact, width, height, 0)
         label = &"ID {contact.id} X {point.x} Y {point.y}"
       result.rect(point.x - 7, point.y - 7, 15, 15, Green)
       result.text(margin, height - 65 - active * 9 * scale, label, Cyan, scale)
@@ -143,12 +162,20 @@ proc pressed(devices: seq[InputDevice], code: uint16): bool =
       if control.kind == EventKey and control.code == code and control.value != 0:
         return true
 
-proc namedPressed(settings: Settings, devices: seq[InputDevice], name: string, fallback: uint16): bool =
+proc namedPressed(settings: Settings, devices: seq[InputDevice], monitor: GamepadMonitor,
+    name: string, fallback: uint16): bool =
   if settings.bindings.len == 0:
     return devices.pressed(fallback)
   for binding in settings.bindings:
     if binding.label == name:
+      if settings.gamepad == "paddy" and binding.usesPaddy():
+        return monitor.active(binding)
       return binding.active(devices)
+
+proc freshPress(settings: Settings, monitor: GamepadMonitor, label: string): bool =
+  for binding in settings.bindings:
+    if binding.label == label:
+      return monitor.freshPress(binding)
 
 proc bindingPress(settings: Settings, device: InputDevice, event: InputEvent, label: string): bool =
   for binding in settings.bindings:
@@ -171,6 +198,9 @@ proc calibrate(settings: var Settings, devices: seq[InputDevice], fb: Display) =
     candidate: Binding
     message = "PRESS THEN RELEASE EACH BUTTON"
   while index < labels.len and not stopping:
+    if not fb.poll():
+      stopping = true
+      break
     if (getMonoTime() - started).inSeconds >= settings.seconds:
       raise newException(IOError, "Calibration timed out; profile was not changed")
     var alreadyMapped = false
@@ -306,8 +336,13 @@ proc main() =
   if settings.command == "info":
     echo "ALSA device: ", settings.audioDevice
     echo "Tone key: ", settings.toneKey
+    if settings.gamepad == "paddy":
+      initGamepads()
+      defer: closeGamepads()
+      for pad in pollGamepads():
+        echo "PADDY id=", pad.id, " name=", pad.name
     return
-  if devices.len == 0:
+  if devices.len == 0 and (fb == nil or settings.displayBackend() != "x11"):
     raise newException(IOError, "No input devices selected; use --input:/dev/input/eventN")
   if settings.command == "calibrate":
     settings.calibrate(devices, fb)
@@ -316,23 +351,38 @@ proc main() =
     settings.command = "test"
   let started = getMonoTime()
   var
+    monitor: GamepadMonitor
     tick = 0
     toneCount = 0
     comboStarted: MonoTime
     comboHeld = false
     trace: TouchTrace
+    lastDraw: MonoTime
+  if settings.gamepad == "paddy":
+    initGamepads()
+  defer:
+    if settings.gamepad == "paddy": closeGamepads()
   while not stopping and (getMonoTime() - started).inSeconds < settings.seconds:
+    if fb != nil and not fb.poll(): break
+    if settings.gamepad == "paddy": monitor.poll()
     for device in devices:
       for event in device.readEvents():
         if event.kind != EventSync:
-          echo device.name, " type=", event.kind, " code=", event.code, " value=", event.value
-        if settings.bindingPress(device, event, "X"):
+          echo "RAW ", device.name, " type=", event.kind, " code=", event.code, " value=", event.value
+        if settings.gamepad == "raw" and settings.bindingPress(device, event, "X"):
           trace = TouchTrace()
-        if settings.command == "test" and settings.isTone(device, event) and
-            not settings.namedPressed(devices, "SELECT", 314):
+        if settings.gamepad == "raw" and settings.command == "test" and settings.isTone(device, event) and
+            not settings.namedPressed(devices, monitor, "SELECT", 314):
           audio.play()
           inc toneCount
-    if settings.namedPressed(devices, "SELECT", 314) and settings.namedPressed(devices, "START", 315):
+    if settings.gamepad == "paddy":
+      if settings.freshPress(monitor, "X"): trace = TouchTrace()
+      if settings.command == "test" and settings.freshPress(monitor, "START") and
+          not settings.namedPressed(devices, monitor, "SELECT", 314):
+        audio.play()
+        inc toneCount
+    if settings.namedPressed(devices, monitor, "SELECT", 314) and
+        settings.namedPressed(devices, monitor, "START", 315):
       if not comboHeld:
         comboStarted = getMonoTime()
         comboHeld = true
@@ -342,19 +392,16 @@ proc main() =
     else:
       comboHeld = false
     audio.poll()
-    if fb != nil:
-      fb.present(draw(settings, devices, fb.width, fb.height, tick, audio.completed))
+    if fb != nil and (getMonoTime() - lastDraw).inMilliseconds >= 80:
+      lastDraw = getMonoTime()
+      fb.present(draw(settings, devices, fb.width, fb.height, tick, audio.completed, monitor))
       if fb.count() > 1:
-        var state: TouchState
-        for device in devices:
-          if device.name == settings.touchName:
-            state = device.touch
-        trace.observe(state, fb.width(1), fb.height(1), settings.touchRotation)
-        for device in devices:
-          device.touch.samples.setLen(0)
+        let state = fb.touch
+        trace.observe(state, fb.width(1), fb.height(1), 0)
+        fb.touch.samples.setLen(0)
         fb.present(drawTouch(settings, state, trace, fb.width(1), fb.height(1), tick), 1)
-    inc tick
-    sleep(80)
+      inc tick
+    sleep(8)
   echo "Completed tone playbacks: ", audio.completed, "; requests: ", toneCount
   for device in devices:
     for control in device.controls:

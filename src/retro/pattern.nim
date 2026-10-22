@@ -1,11 +1,10 @@
 import
-  std/[strutils]
+  std/[strutils],
+  pixie
 
 type
   Color* = uint32
-  Canvas* = object
-    width*, height*: int
-    pixels*: seq[Color]
+  Canvas* = Image
 
 const
   White* = 0xffffff'u32
@@ -61,18 +60,20 @@ const
 proc newCanvas*(width, height: int): Canvas =
   if width <= 0 or height <= 0 or width > 8192 or height > 8192:
     raise newException(ValueError, "Invalid canvas dimensions")
-  Canvas(width: width, height: height, pixels: newSeq[Color](width * height))
+  newImage(width, height)
 
-proc fill*(canvas: var Canvas, color: Color) =
-  for pixel in canvas.pixels.mitems:
-    pixel = color
+proc fill*(canvas: Canvas, color: Color) =
+  canvas.fill(rgbx(uint8(color shr 16 and 255), uint8(color shr 8 and 255),
+    uint8(color and 255), 255))
 
-proc rect*(canvas: var Canvas, x, y, width, height: int, color: Color) =
+proc rect*(canvas: Canvas, x, y, width, height: int, color: Color) =
+  let pixel = rgbx(uint8(color shr 16 and 255), uint8(color shr 8 and 255),
+    uint8(color and 255), 255)
   for row in max(0, y) ..< min(canvas.height, y + height):
     for column in max(0, x) ..< min(canvas.width, x + width):
-      canvas.pixels[row * canvas.width + column] = color
+      canvas.data[row * canvas.width + column] = pixel
 
-proc text*(canvas: var Canvas, x, y: int, value: string, color = White, scale = 2) =
+proc text*(canvas: Canvas, x, y: int, value: string, color = White, scale = 2) =
   for index, character in value.toUpperAscii():
     for (letter, bitmap) in Glyphs:
       if character == letter:
@@ -112,8 +113,8 @@ proc rotatedPoint*(x, y, width, height, rotation: int): tuple[x, y: int] =
 
 proc savePpm*(canvas: Canvas, path: string) =
   var output = "P6\n" & $canvas.width & " " & $canvas.height & "\n255\n"
-  for pixel in canvas.pixels:
-    output.add char((pixel shr 16) and 255)
-    output.add char((pixel shr 8) and 255)
-    output.add char(pixel and 255)
+  for pixel in canvas.data:
+    output.add char(pixel.r)
+    output.add char(pixel.g)
+    output.add char(pixel.b)
   writeFile(path, output)

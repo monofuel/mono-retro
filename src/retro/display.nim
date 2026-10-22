@@ -1,58 +1,96 @@
 import
-  std/[os, posix],
-  ./[drm, framebuffer, pattern, settings]
+  std/strutils,
+  windy,
+  ./[input, pattern, settings, touch]
 
 type
   Display* = ref object
-    fb: Framebuffer
-    drm: DrmDisplay
+    windows: seq[Window]
+    backend: string
+    touch*: TouchState
 
 proc displayBackend*(settings: Settings): string =
-  ## Recognize framebuffer character devices when choosing the automatic backend.
-  if settings.display != "auto":
-    return settings.display
-  var status: Stat
-  if stat(settings.framebuffer.cstring, status) == 0:
-    if not S_ISCHR(status.st_mode):
-      raise newException(ValueError, "Framebuffer path is not a character device")
-    return "fbdev"
-  let error = osLastError()
-  if error notin [OSErrorCode(ENOENT), OSErrorCode(ENOTDIR)]:
-    raiseOSError(error, settings.framebuffer)
-  "drm"
-
-proc openDisplay*(settings: Settings): Display =
-  ## Open the configured native display backend.
-  result = Display()
-  let backend = settings.displayBackend()
-  if backend == "fbdev":
-    result.fb = openFramebuffer(settings.framebuffer, settings.rotation)
-  else:
-    result.drm = openDrm(settings.drmDevice, settings.outputs, settings.rotation)
-
-proc count*(display: Display): int =
-  ## Count independently addressable screens.
-  if display.fb != nil: 1 else: display.drm.screens.len
-
-proc width*(display: Display, index = 0): int =
-  ## Return a screen's logical width after rotation.
-  if display.fb != nil: display.fb.width else: display.drm.screens[index].width
-
-proc height*(display: Display, index = 0): int =
-  ## Return a screen's logical height after rotation.
-  if display.fb != nil: display.fb.height else: display.drm.screens[index].height
-
-proc present*(display: Display, canvas: Canvas, index = 0) =
-  ## Send a canvas to the selected screen.
-  if display.fb != nil: display.fb.present(canvas)
-  else: display.drm.present(index, canvas)
-
-proc describe*(display: Display, index: int): string =
-  ## Describe the selected native screen.
-  if display.fb != nil: display.fb.describe()
-  else: display.drm.screens[index].describe()
+  if settings.display != "auto": return settings.display
+  when HasX11: "x11"
+  elif HasFbdev: "fbdev"
+  else: "drm"
 
 proc close*(display: Display) =
-  ## Restore display state where available and release native resources.
-  if display.fb != nil: display.fb.close()
-  elif display.drm != nil: display.drm.close()
+  var errors: seq[string]
+  for window in display.windows:
+    try:
+      window.close()
+    except CatchableError as error:
+      errors.add error.msg
+    finally:
+      window.onTouch = nil
+  display.windows.setLen(0)
+  if errors.len > 0:
+    raise newException(IOError, errors.join("; "))
+
+proc openDisplay*(settings: Settings): Display =
+  result = Display(backend: settings.displayBackend())
+  let display = result
+  let backend = case result.backend
+    of "x11": X11Backend
+    of "fbdev": FbdevBackend
+    of "drm": DrmBackend
+    else: raise newException(ValueError, "Unknown display backend")
+  setLinuxBackend(backend)
+  try:
+    let count = if backend == FbdevBackend: 1 else: max(1, settings.outputs.len)
+    for index in 0 ..< count:
+      var options = LinuxWindowOptions(rotation: settings.rotation,
+        touchRotation: settings.touchRotation)
+      if backend == FbdevBackend: options.device = settings.framebuffer
+      elif backend == DrmBackend:
+        options.device = settings.drmDevice
+        if settings.outputs.len > index: options.output = settings.outputs[index]
+      if index == 1 and backend != X11Backend and settings.touchName.len > 0:
+        let paths = inputPaths(@[settings.touchName])
+        if paths.len != 1:
+          raise newException(IOError, "Expected exactly one touchscreen: " & settings.touchName)
+        options.touchDevice = paths[0]
+      let window = newWindow(settings.title, ivec2(720, 480), vsync = false,
+        linuxOptions = options)
+      display.windows.add window
+      let size = window.framebufferSize
+      if index == 1:
+        display.touch = TouchState(enabled: options.touchDevice.len > 0,
+          multitouch: true, minimumX: 0, maximumX: size.x - 1,
+          minimumY: 0, maximumY: size.y - 1)
+        window.onTouch = proc(event: TouchEvent) =
+          var found = -1
+          for index, contact in display.touch.contacts:
+            if contact.id == event.contact.id: found = index
+          let contact = touch.TouchContact(id: event.contact.id,
+            x: int32(event.contact.position.x), y: int32(event.contact.position.y),
+            active: event.phase in {TouchBegin, TouchMove})
+          if event.phase in {TouchEnd, TouchCancel}:
+            if found >= 0: display.touch.contacts.delete(found)
+          elif found >= 0: display.touch.contacts[found] = contact
+          else: display.touch.contacts.add contact
+          if contact.active:
+            display.touch.samples.add contact
+            if display.touch.samples.len > 256:
+              display.touch.samples.delete(0)
+  except:
+    result.close()
+    raise
+
+proc count*(display: Display): int = display.windows.len
+proc width*(display: Display, index = 0): int = int(display.windows[index].framebufferSize.x)
+proc height*(display: Display, index = 0): int = int(display.windows[index].framebufferSize.y)
+
+proc poll*(display: Display): bool =
+  pollEvents()
+  for window in display.windows:
+    if window.closeRequested or window.closed or window.buttonPressed[KeyEscape]:
+      return false
+  true
+
+proc present*(display: Display, canvas: Canvas, index = 0) =
+  display.windows[index].presentPixels(canvas)
+
+proc describe*(display: Display, index: int): string =
+  display.backend & " " & $display.width(index) & "x" & $display.height(index)

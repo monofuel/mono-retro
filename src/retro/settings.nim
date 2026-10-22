@@ -10,7 +10,7 @@ type
     x*, y*: uint16
   Settings* = object
     title*, framebuffer*, audioDevice*, preview*, command*, saveProfile*: string
-    display*, drmDevice*, touchName*: string
+    display*, drmDevice*, touchName*, gamepad*: string
     outputs*: seq[string]
     sticks*: seq[StickBinding]
     inputNames*, inputDevices*: seq[string]
@@ -52,7 +52,8 @@ proc detectDevice*(): DeviceKind =
 
 proc defaultSettings*(): Settings =
   Settings(title: "LINUX HANDHELD", framebuffer: "/dev/fb0", audioDevice: "default",
-    display: "auto", drmDevice: "/dev/dri/card0", command: "test", seconds: 300, toneKey: 315)
+    display: "auto", drmDevice: "/dev/dri/card0", gamepad: "paddy",
+    command: "test", seconds: 300, toneKey: 315)
 
 proc applyProfile*(settings: var Settings, profile: JsonNode) =
   for key, value in profile:
@@ -97,12 +98,14 @@ proc applyProfile*(settings: var Settings, profile: JsonNode) =
     else: raise newException(ValueError, "Unknown profile setting: " & key)
 
 proc validate*(settings: Settings) =
+  if settings.gamepad notin ["paddy", "raw"]:
+    raise newException(ValueError, "Gamepad must be paddy or raw")
   if settings.rotation notin [0, 90, 180, 270]:
     raise newException(ValueError, "Rotation must be 0, 90, 180 or 270")
   if settings.touchRotation notin [0, 90, 180, 270]:
     raise newException(ValueError, "Touch rotation must be 0, 90, 180 or 270")
-  if settings.display notin ["auto", "fbdev", "drm"]:
-    raise newException(ValueError, "Display must be auto, fbdev or drm")
+  if settings.display notin ["auto", "x11", "fbdev", "drm"]:
+    raise newException(ValueError, "Display must be auto, x11, fbdev or drm")
   for index, output in settings.outputs:
     if output.len == 0 or output in settings.outputs[0 ..< index]:
       raise newException(ValueError, "Display outputs must be unique nonempty names")
@@ -149,6 +152,7 @@ proc parseSettings*(arguments: seq[string], detected = genericDevice): Settings 
         result.framebuffer = value
         result.display = "fbdev"
       of "display": result.display = value
+      of "gamepad": result.gamepad = value
       of "drm":
         result.drmDevice = value
         result.display = "drm"

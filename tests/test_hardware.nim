@@ -1,36 +1,18 @@
 import
   std/[json],
-  retro/[audio, display, drm, framebuffer, input, pattern, settings, touch]
+  pixie,
+  windy/platforms/linux/backends,
+  retro/[audio, display, input, pattern, settings, touch]
 
 block:
   var configuration = defaultSettings()
-  configuration.framebuffer = "/dev/null"
-  doAssert configuration.displayBackend() == "fbdev"
-  configuration.framebuffer = "/proc/mono-retro-missing-framebuffer"
-  doAssert configuration.displayBackend() == "drm"
+  when HasX11: doAssert configuration.displayBackend() == "x11"
+  elif HasFbdev: doAssert configuration.displayBackend() == "fbdev"
+  else: doAssert configuration.displayBackend() == "drm"
   configuration.display = "fbdev"
   doAssert configuration.displayBackend() == "fbdev"
-  configuration.display = "auto"
-  configuration.framebuffer = currentSourcePath()
-  var rejectedFile = false
-  try:
-    discard configuration.displayBackend()
-  except ValueError:
-    rejectedFile = true
-  doAssert rejectedFile
-
-block:
-  let
-    red = Bitfield(offset: 11, length: 5)
-    green = Bitfield(offset: 5, length: 6)
-    blue = Bitfield(offset: 0, length: 5)
-  doAssert packPixel(White, red, green, blue, Bitfield()) == 0xffff
-  doAssert packPixel(0xff0000, red, green, blue, Bitfield()) == 0xf800
-  doAssert packPixel(0x00ff00, red, green, blue, Bitfield()) == 0x07e0
-  doAssert packPixel(0x0000ff, red, green, blue, Bitfield()) == 0x001f
-  doAssert packPixel(0x123456, Bitfield(offset: 0, length: 8),
-    Bitfield(offset: 8, length: 8), Bitfield(offset: 16, length: 8),
-    Bitfield(offset: 24, length: 8)) == 0xff563412'u32
+  configuration.display = "drm"
+  doAssert configuration.displayBackend() == "drm"
 
 block:
   for rotation in [0, 90, 180, 270]:
@@ -50,11 +32,14 @@ block:
 block:
   var canvas = newCanvas(4, 3)
   canvas.rect(-1, -1, 3, 3, White)
-  doAssert canvas.pixels == @[White, White, 0'u32, 0, White, White, 0, 0, 0, 0, 0, 0]
+  doAssert canvas.data[0] == rgbx(255, 255, 255, 255)
+  doAssert canvas.data[5] == rgbx(255, 255, 255, 255)
+  doAssert canvas.data[2] == rgbx(0, 0, 0, 0)
+  doAssert canvas.data[11] == rgbx(0, 0, 0, 0)
   let pattern = testPattern(720, 480, 5)
-  doAssert pattern.pixels.len == 720 * 480
-  doAssert pattern.pixels[0] == White
-  doAssert pattern.pixels[30 * 720 + 680] == Black
+  doAssert pattern.data.len == 720 * 480
+  doAssert pattern.data[0] == rgbx(255, 255, 255, 255)
+  doAssert pattern.data[30 * 720 + 680] == rgbx(0, 0, 0, 255)
 
 block:
   var controls = @[
@@ -243,13 +228,3 @@ block:
   var trace: TouchTrace
   trace.observe(device.touch, 1024, 768, 0)
   doAssert trace.samples.len > 0
-
-block:
-  doAssert chooseCrtc([90'u32, 110, 130], 130, 5, []) == 130
-  doAssert chooseCrtc([90'u32, 110, 130], 0, 5, [90'u32]) == 130
-  var rejected = false
-  try:
-    discard chooseCrtc([90'u32, 130], 90, 1, [90'u32])
-  except IOError:
-    rejected = true
-  doAssert rejected

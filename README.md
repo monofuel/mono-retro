@@ -1,13 +1,24 @@
 # mono-retro
 
-Native Nim tools for retro handhelds. `hwtest` tests screens, evdev buttons,
-analog sticks, touch and ALSA sound without X11, Wayland or SDL. It has no
-third-party Nim dependencies. Images and machine configuration belong in
+Native Nim tools for retro handhelds and X11 desktops. `hwtest` uses Windy for
+display and multitouch, Paddy for gamepads, raw evdev for diagnostics, and ALSA
+for sound. See [Windy builds and backend selection](README-windy.md). Images and machine configuration belong in
 monobake and monorig.
 
 ## Build and tests
 
-Requires Nim 2.x, a C compiler, Linux development headers and make:
+Requires Nim 2.x, a C compiler, Linux development headers, libudev, libevdev
+and make. The sibling Paddy checkout's `anbernic-handhelds` branch supplies the
+automatic mdev discovery support. Register both checkouts in the parent Nimby workspace:
+
+```sh
+cd ..
+nimby install paddy/paddy.nimble
+nimby install mono-retro/mono-retro.nimble
+cd mono-retro
+```
+
+Then build and test:
 
 ```sh
 make check test build
@@ -20,7 +31,8 @@ The DS preview also writes `ds-preview-touch.ppm`. Previews need no hardware.
 `make arm64` cross-compiles using `aarch64-unknown-linux-gnu-gcc` on PATH.
 `MONO_RETRO_CC` selects another compatible compiler executable. Target settings
 live in `config.nims`; the ARM64 binary uses the standard Linux loader.
-Linux hardware access normally requires root.
+Target libudev/libevdev libraries can be placed in `build/arm64-libs` for linking.
+Direct handheld hardware access normally requires root; X11 windows do not.
 
 ALSA playback loads `libasound.so.2` when first requested. DRM displays load
 `libdrm.so.2` at runtime; framebuffer devices do not need libdrm. Gentoo packages
@@ -59,7 +71,8 @@ RG SP uses `/dev/fb0` through the existing packed truecolor framebuffer path
 (16-, 24- and 32-bit pixel formats). Its 17-button profile comes from physical
 calibration.
 
-RG DS Plus uses native DRM/KMS with CPU-drawn, mapped XRGB8888 scanout buffers.
+RG DS Plus uses Windy's native DRM/KMS backend with CPU-drawn scanout buffers,
+preferring a Pixie-compatible pixel format advertised by the primary plane.
 It does not require a GPU renderer. DSI-1 is the top screen and DSI-2 is the
 bottom, both 1024x768. The top shows buttons and the single left stick. Back
 and Menu are distinct inputs. The bottom shows touch coordinates, finger IDs,
@@ -68,13 +81,30 @@ Touch samples commit at evdev report boundaries; multitouch contacts are
 tracked independently. The kernel advertises extra controller axes/buttons
 which need not correspond to physical controls.
 
-Analog markers use raw evdev values scaled linearly to the panel, clamped only
-at its edges. Raw X/Y values are also displayed. The app applies no deadzone,
-smoothing, averaging or cardinal snapping, including no application of the
-kernel's advertised `flat` deadzone. Controller firmware or kernel-driver
-filtering can still affect the values delivered through evdev.
+Gamepad testing defaults to Paddy. All mapped gamepad badges, the Start tone,
+X touch-clear action and Select+Start exit combo use Paddy's snapshots and
+edges. The display reports the number of connected Paddy controllers; missing
+controllers do not silently fall back to raw gamepad input. Back and volume
+remain raw evdev inputs, marked `RAW`, and displayed touch contacts come through Windy's evdev backend.
 
-The test redraws on an 80 ms timer and writes its scanout buffer directly;
+Anbernic mappings belong to this app, in `src/retro/anbernic.nim`. It translates
+Paddy's generic snapshots using its public `Gamepad` fields and accessors;
+Paddy itself contains no Anbernic profiles. Other controllers pass through
+unchanged. This app's mapped A/B/X/Y follow Xbox positions, while badges show
+the handheld's printed legends: B is mapped A, A is mapped B, Y is mapped X and
+X is mapped Y. App-mapped changes use an `APP` log prefix, Paddy connections
+use `PADDY`, and kernel events use `RAW`.
+
+The DS Plus stick shows a white app-mapped marker and a cyan raw evdev marker,
+with both sets of coordinates. Paddy retains its normal 10% axis cutoff;
+the app maps positive Y to point up. Raw coordinates are scaled linearly and clamped
+only at the panel edges, without an application deadzone or smoothing.
+Controller firmware or kernel-driver filtering can still affect both.
+
+Use `--gamepad:raw` for the original raw test, including raw gamepad badges,
+tone and exit actions. Calibration always reads raw evdev events.
+
+The test polls input every 8 ms and redraws on an 80 ms timer, writing its scanout buffer directly;
 it is a functional hardware test, not a vblank-paced latency benchmark.
 
 ## Sound and exit
@@ -108,7 +138,7 @@ cleanup.
 
 ## Profiles and calibration
 
-Profiles use JSON: `title`, `display` (`auto`, `fbdev`, `drm`), `framebuffer`,
+Profiles use JSON: `title`, `display` (`auto`, `x11`, `fbdev`, `drm`), `framebuffer`,
 `drmDevice`, ordered `outputs`, `inputNames`, `audioDevice`, `rotation`,
 `toneKey`, `bindings`, `sticks`, `touchName` and `touchRotation`.
 Rotations accept 0/90/180/270. Stick entries contain `label`, `device`, `x`

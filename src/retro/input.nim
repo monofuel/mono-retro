@@ -1,6 +1,6 @@
 import
   std/[os, posix, strformat, strutils],
-  ./[framebuffer, touch]
+  ./touch
 
 type
   InputEvent* {.importc: "struct input_event", header: "<linux/input.h>", bycopy.} = object
@@ -33,6 +33,8 @@ const
   KeyCapacity = 768
   AxisCapacity = 64
   KeyBytes = KeyCapacity div 8
+
+proc deviceIoctl(fd: cint, request: culong, argument: pointer): cint {.importc: "ioctl", header: "<sys/ioctl.h>".}
 
 proc getName(length: cint): culong {.importc: "EVIOCGNAME", header: "<linux/input.h>".}
 proc getBits(kind, length: cint): culong {.importc: "EVIOCGBIT", header: "<linux/input.h>".}
