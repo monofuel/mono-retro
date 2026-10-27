@@ -5,6 +5,9 @@ display and multitouch, Paddy for gamepads, raw evdev for diagnostics, and ALSA
 for sound. See [Windy builds and backend selection](README-windy.md). Images and machine configuration belong in
 monobake and monorig.
 
+`mono-retro-player` is the silent desktop libretro MVP for testing Mother 3 with
+mGBA. See [building, controls and save handling](README-player.md).
+
 ## Launcher
 
 `mono-retro` has Hardware Test, System Info, Reboot and Shut Down entries. It uses Windy,
