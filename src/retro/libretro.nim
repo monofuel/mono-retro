@@ -8,6 +8,7 @@ const
   CoreApiVersion = 1'u32
   JoypadDevice = 1'u32
   JoypadMask = 256'u32
+  PointerDevice = 6'u32
   SaveRam = 0'u32
   MaxSaveBytes = 64 * 1024 * 1024
   Experimental = 0x10000'u32
@@ -35,6 +36,10 @@ const
 {.emit: "void mono_retro_log(enum retro_log_level, const char *, ...);".}
 
 type
+  CoreOption* = tuple[key, value: string]
+  PointerInput* = object
+    x*, y*: int16
+    pressed*: bool
   SystemInfo* {.bycopy, importc: "struct retro_system_info", header: "libretro.h".} = object
     libraryName* {.importc: "library_name".}: cstring
     libraryVersion* {.importc: "library_version".}: cstring
@@ -74,6 +79,7 @@ type
     romPath, romData, systemDirectory, saveDirectory: string
     saved: string
     variables: Table[string, string]
+    options: seq[CoreOption]
     failure*: string
     shutdown*: bool
     pixelFormat*: int
@@ -81,6 +87,7 @@ type
     info*: SystemInfo
     av*: AvInfo
     buttons*: uint16
+    pointerInput*: PointerInput
     frames*, videoFrames*, audioFrames*: uint64
     captureAudio: bool
     audioSamples: seq[int16]
@@ -164,7 +171,13 @@ proc environment(command: cuint, data: pointer): bool {.cdecl.} =
             description = $variables[index].value
             separator = description.find(';')
           if separator < 0: raise newException(ValueError, "Malformed core option: " & key)
-          let value = description[separator + 1 .. ^1].strip().split('|')[0]
+          let values = description[separator + 1 .. ^1].strip().split('|')
+          var value = values[0]
+          for option in active.options:
+            if option.key == key:
+              if option.value notin values:
+                raise newException(ValueError, "Invalid core option: " & key & "=" & option.value)
+              value = option.value
           active.variables[key] = value
           inc index
         return true
@@ -246,10 +259,19 @@ proc poll() {.cdecl.} =
   discard
 
 proc input(port, device, index, id: cuint): int16 {.cdecl.} =
-  ## Expose one digital RetroPad, including the optional bitmask query.
-  if port != 0 or device != JoypadDevice or index != 0: return 0
-  if id == JoypadMask: return cast[int16](active.buttons)
-  if id < 16: return int16((active.buttons shr id) and 1)
+  ## Expose a digital RetroPad and one normalized pointer snapshot.
+  if port != 0 or index != 0: return 0
+  case device
+  of JoypadDevice:
+    if id == JoypadMask: return cast[int16](active.buttons)
+    if id < 16: return int16((active.buttons shr id) and 1)
+  of PointerDevice:
+    case id
+    of 0: return active.pointerInput.x
+    of 1: return active.pointerInput.y
+    of 2, 3: return int16(active.pointerInput.pressed)
+    else: discard
+  else: discard
 
 proc save*(session: CoreSession) =
   ## Persist the current core-reported save RAM only when its bytes change.
@@ -281,13 +303,14 @@ proc close*(session: CoreSession) =
     session.library = nil
     active = nil
 
-proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false): CoreSession =
+proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false,
+    options: seq[CoreOption] = @[]): CoreSession =
   ## Load one explicitly selected software core and an independent save history.
   if active != nil: raise newException(ValueError, "Only one libretro core can be active")
   if not fileExists(corePath): raise newException(IOError, "Missing core: " & corePath)
   if not fileExists(romPath): raise newException(IOError, "Missing ROM: " & romPath)
   result = CoreSession(romPath: absolutePath(romPath), saveDirectory: absolutePath(saveDirectory),
-    captureAudio: captureAudio)
+    captureAudio: captureAudio, options: options)
   let session = result
   session.systemDirectory = session.saveDirectory / "system"
   session.savePath = session.saveDirectory / romPath.splitFile.name & ".srm"
@@ -335,9 +358,12 @@ proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false): 
     if not session.info.needFullpath:
       game.size = csize_t(session.romData.len)
       if session.romData.len > 0: game.data = addr session.romData[0]
-    if not session.loadGame(addr game): raise newException(IOError, "Core rejected the ROM")
-    session.loaded = true
+    session.loaded = session.loadGame(addr game)
     session.check()
+    if not session.loaded: raise newException(IOError, "Core rejected the ROM")
+    for option in session.options:
+      if not session.variables.hasKey(option.key):
+        raise newException(ValueError, "Core did not register option: " & option.key)
     session.setController(0, JoypadDevice)
     session.getAv(addr session.av)
     session.av.validate()
@@ -357,9 +383,10 @@ proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false): 
     session.close()
     raise
 
-proc step*(session: CoreSession, buttons: uint16) =
+proc step*(session: CoreSession, buttons: uint16, pointerInput = PointerInput()) =
   ## Advance exactly one frame with the frontend's current input snapshot.
   session.buttons = buttons
+  session.pointerInput = pointerInput
   session.audioSamples.setLen(0)
   session.run()
   inc session.frames

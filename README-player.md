@@ -74,6 +74,52 @@ center-cropped. Hardware rendering requests are unsupported.
 `--frames:N` exits after N emulated frames for bounded tests. Window close,
 SIGINT and SIGTERM also save and exit.
 
+## Lost in Blue with melonDS DS on X11
+
+From this repository, choose a mode when launching:
+
+```sh
+nix-shell shell-player.nix --run 'make play-lost-in-blue DS_LAYOUT=combined'
+nix-shell shell-player.nix --run 'make play-lost-in-blue DS_LAYOUT=separate'
+```
+
+Combined mode starts one 256×384 window with the DS top screen above its touch
+screen. Separate mode starts independently resizable Top and Touch windows at
+256×192 each. Both retain integer scaling and black borders. Left-click/drag on
+the lower screen supplies touch input; clicks on the top screen or borders do
+not. Keyboard controls work in either focused game window; W/Q add DS X/Y to
+the existing controls. Closing either window or Escape saves and exits. Playback
+pauses when neither game window is focused and drawable.
+
+Setup makes real copies of the retained cartridge ROM and **original `.sav`**
+from `~/Documents/Arcade/cartridge-dumps/DS/Lost in Blue/` into ignored
+`build/player-test/melonds-lost-in-blue/`. The copied save is renamed to
+`saves/LOST_IN_BLUE_ASKEA4_00.srm`. Subsequent launches keep test progress;
+they do not reseed that save. The helper rejects linked working files, and the
+ROM and save originals remain outside the writable emulator directories.
+Both layouts share the working save; exit one before launching the other.
+`LOST_IN_BLUE_SOURCE` overrides the source directory for another local copy.
+
+The tested core is Nixpkgs `libretro.melondsds` 1.2.0, upstream commit
+[`33c4826`](https://github.com/JesseTG/melonds-ds/tree/33c48260402865ef77667487528efd5ca7ce1233),
+licensed GPLv3. Its dependencies remain reachable through
+`build/cores/melondsds-package`; the library is
+`lib/retroarch/cores/melondsds_libretro.so` within that package. The tested
+library SHA-256 is `f4d45240257317e12f9dd3b11fead78f58b643d9607053c431047580089a46a1`.
+ROMs, saves and core binaries are not tracked in Git.
+
+The generic player also accepts `--ds-layout:combined|separate`. This opt-in
+preset selects software rendering, native top/bottom order with no gap, one fixed
+core layout and pointer input. It requires 256×384 video and X11. Core option
+overrides use the existing legacy libretro options API; unsupported requested
+options fail explicitly. Our Windy fork includes the X11 event-predicate ABI fix
+needed to route focus and mouse input independently between the two windows.
+
+The tested cartridge boots with the core's built-in FreeBIOS and firmware.
+Audio output uses Slappy as usual. Microphone input is disabled for this MVP;
+Lost in Blue interactions requiring blowing remain unavailable. Handheld DS
+presentation and switching layouts during play are deferred.
+
 ## Handhelds
 
 `make player-rg-sp` builds `build/mono-retro-player-rg-sp` with the fbdev backend
@@ -175,6 +221,24 @@ playback with an unusable audio backend.
 The C fixture also tests full-path versus in-memory ROM loading, option defaults,
 duplicate frames, callback error containment, both captured-audio callbacks,
 save reload/size checks and cleanup after rejected cores or ROMs.
+
+The X11 suite also checks both DS window modes with a synthetic core: screen
+separation, independent resize, letterboxing, pointer coordinates/drag/release,
+focus transfer, keyboard input and either-window close. For the real core and
+the separate Lost in Blue working files, run within the development shell:
+
+```sh
+nim r -o:build/integration-player-melonds tests/integration_player_melonds.nim \
+  build/cores/melondsds-package/lib/retroarch/cores/melondsds_libretro.so \
+  build/player-test/melonds-lost-in-blue/LOST_IN_BLUE_ASKEA4_00.nds \
+  build/player-test/melonds-lost-in-blue/saves/LOST_IN_BLUE_ASKEA4_00.srm
+```
+
+This checks 600 frames of real DS graphics/audio and seed/save restoration using
+temporary SRAM copies. Passing the same three paths to `integration_player_x11`
+on an isolated display checks 180 paced real-core frames in each layout, with
+OpenAL's null backend. Manual acceptance still needs original-save recognition,
+touch accuracy in the game, audible playback and an in-game save/relaunch check.
 
 With separately obtained mGBA and Mother 3 working copies:
 

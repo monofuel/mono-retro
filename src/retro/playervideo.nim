@@ -1,11 +1,23 @@
 import
   pixie
 
+type
+  FrameViewport* = object
+    left*, top*, scale*: int
+
 const
   PixelRgb1555* = 0
   PixelXrgb8888* = 1
   PixelRgb565* = 2
   MaxFrameDimension = 8192
+
+proc frameViewport*(sourceWidth, sourceHeight, width, height: int): FrameViewport =
+  ## Share integer scaling and crop offsets between rendering and pointer input.
+  if min(sourceWidth, sourceHeight) <= 0 or min(width, height) <= 0:
+    raise newException(ValueError, "Invalid viewport dimensions")
+  result.scale = max(1, min(width div sourceWidth, height div sourceHeight))
+  result.left = (width - sourceWidth * result.scale) div 2
+  result.top = (height - sourceHeight * result.scale) div 2
 
 proc copyFrame*(previous: Image, data: pointer, width, height, pitch: int,
     format: int): Image =
@@ -55,11 +67,11 @@ proc fitFrame*(source, previous: Image, width, height: int): Image =
   let
     sourcePixels = cast[ptr UncheckedArray[ColorRGBX]](unsafeAddr source.data[0])
     targetPixels = cast[ptr UncheckedArray[ColorRGBX]](addr result.data[0])
-    scale = max(1, min(width div source.width, height div source.height))
+    viewport = frameViewport(source.width, source.height, width, height)
+    scale = viewport.scale
     viewWidth = source.width * scale
-    viewHeight = source.height * scale
-    left = (width - viewWidth) div 2
-    top = (height - viewHeight) div 2
+    left = viewport.left
+    top = viewport.top
     startX = max(0, -left)
     endX = min(source.width, width - left)
     rowWidth = min(width, viewWidth)

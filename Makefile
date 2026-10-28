@@ -10,6 +10,8 @@ check:
 	nim check tests/test_player.nim
 	nim check tests/test_playercore.nim
 	nim check tests/test_playeraudio.nim
+	nim check tests/test_playerds.nim
+	nim check tools/prepare_lost_in_blue.nim
 test:
 	mkdir -p build
 	nim r tests/test_hardware.nim
@@ -72,9 +74,30 @@ player-fixtures:
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC tests/fixtures/player_core.c -o build/player-fixture.so
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC -DFULLPATH tests/fixtures/player_core.c -o build/player-fullpath.so
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC -DOMIT_RUN tests/fixtures/player_core.c -o build/player-missing.so
-test-player: player-fixtures
+test-player: player-fixtures prepare-lost-in-blue-tool
 	nim r -o:build/test-player tests/test_player.nim
 	nim r -o:build/test-playercore tests/test_playercore.nim
 	ALSOFT_DRIVERS=null nim r -o:build/test-playeraudio tests/test_playeraudio.nim
+	nim r -o:build/test-playerds tests/test_playerds.nim
+	nim r -o:build/test-prepare-lost-in-blue tests/test_prepare_lost_in_blue.nim
 test-player-x11: player-desktop player-fixtures
 	nim r -o:build/integration-player-x11 tests/integration_player_x11.nim
+
+DS_LAYOUT ?= combined
+LOST_IN_BLUE_SOURCE ?= $(HOME)/Documents/Arcade/cartridge-dumps/DS/Lost in Blue
+LOST_IN_BLUE_WORK = build/player-test/melonds-lost-in-blue
+MELONDS_CORE = build/cores/melondsds-package/lib/retroarch/cores/melondsds_libretro.so
+
+.PHONY: core-melondsds prepare-lost-in-blue-tool setup-lost-in-blue play-lost-in-blue
+core-melondsds:
+	mkdir -p build/cores
+	nix-build '<nixpkgs>' -A libretro.melondsds --out-link build/cores/melondsds-package
+prepare-lost-in-blue-tool:
+	mkdir -p build
+	nim c -o:build/prepare-lost-in-blue tools/prepare_lost_in_blue.nim
+setup-lost-in-blue: core-melondsds prepare-lost-in-blue-tool
+	build/prepare-lost-in-blue "$(LOST_IN_BLUE_SOURCE)" $(LOST_IN_BLUE_WORK)
+play-lost-in-blue: player-desktop setup-lost-in-blue
+	build/mono-retro-player --core:$(MELONDS_CORE) \
+	  --rom:$(LOST_IN_BLUE_WORK)/LOST_IN_BLUE_ASKEA4_00.nds \
+	  --save-dir:$(LOST_IN_BLUE_WORK)/saves --ds-layout:$(DS_LAYOUT)

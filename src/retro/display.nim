@@ -28,7 +28,8 @@ proc close*(display: Display) =
   if errors.len > 0:
     raise newException(IOError, errors.join("; "))
 
-proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480)): Display =
+proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480),
+    windowTitles: seq[string] = @[]): Display =
   result = Display(backend: settings.displayBackend())
   let display = result
   let backend = case result.backend
@@ -37,8 +38,11 @@ proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480)): Display =
     of "drm": DrmBackend
     else: raise newException(ValueError, "Unknown display backend")
   setLinuxBackend(backend)
+  if windowTitles.len > 0 and backend != X11Backend:
+    raise newException(ValueError, "Named desktop windows require X11")
   try:
-    let count = if backend == FbdevBackend: 1 else: max(1, settings.outputs.len)
+    let count = if windowTitles.len > 0: windowTitles.len
+      elif backend == FbdevBackend: 1 else: max(1, settings.outputs.len)
     for index in 0 ..< count:
       var options = LinuxWindowOptions(rotation: settings.rotation,
         touchRotation: settings.touchRotation)
@@ -51,7 +55,8 @@ proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480)): Display =
         if paths.len != 1:
           raise newException(IOError, "Expected exactly one touchscreen: " & settings.touchName)
         options.touchDevice = paths[0]
-      let window = newWindow(settings.title, initialSize, vsync = false,
+      let title = if windowTitles.len > 0: windowTitles[index] else: settings.title
+      let window = newWindow(title, initialSize, vsync = false,
         linuxOptions = options)
       display.windows.add window
       let size = window.framebufferSize

@@ -40,10 +40,23 @@ void retro_init(void)
     memset(memory, 0xff, sizeof(memory));
     frames = 0;
     trace("init", 1);
-    struct retro_variable variables[] = {{"fixture_option", "Example; first|second"}, {NULL, NULL}};
-    if (!environment(RETRO_ENVIRONMENT_SET_VARIABLES, variables)) abort();
+    struct retro_variable variables[] = {
+        {"fixture_option", "Example; first|second"},
+        {"melonds_render_mode", "Renderer; software|opengl"},
+        {"melonds_screen_layout1", "Layout; top-bottom|bottom-top"},
+        {"melonds_screen_gap", "Gap; 0|1"},
+        {"melonds_number_of_screen_layouts", "Layouts; 1|2"},
+        {"melonds_touch_mode", "Touch; touch|auto"},
+        {"melonds_mic_input", "Mic; silence|noise"},
+        {NULL, NULL}
+    };
+    if (!environment(RETRO_ENVIRONMENT_SET_VARIABLES, variables)) return;
     struct retro_variable variable = {"fixture_option", NULL};
-    if (!environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) || strcmp(variable.value, "first")) abort();
+    if (!environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable)) abort();
+    /* Re-registration must retain the requested value. */
+    if (!environment(RETRO_ENVIRONMENT_SET_VARIABLES, variables)) return;
+    if (!environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable)) abort();
+    trace("option_second", !strcmp(variable.value, "second"));
     unsigned version = 99;
     if (!environment(RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, &version) || version) abort();
     struct retro_log_callback logging;
@@ -64,6 +77,7 @@ void retro_get_system_info(struct retro_system_info *info)
 void retro_get_system_av_info(struct retro_system_av_info *info)
 {
     *info = (struct retro_system_av_info){{3, 2, 3, 2, 1.5f}, {60, 48000}};
+    if (mode == 'N') info->geometry = (struct retro_game_geometry){256, 384, 256, 384, 2.0f / 3.0f};
     /* Integer presentation must retain native pixels even with a different aspect hint. */
     if (mode == 'T') info->geometry.aspect_ratio = 2.0f;
     if (mode == 'I') info->timing.sample_rate = 0;
@@ -99,13 +113,18 @@ void retro_run(void)
     const uint32_t pixels[] = {0xff0000, 0x00ff00, 0x0000ff, 0xdeadbeef,
                               0xffffff, 0x808080, 0x000000, 0xdeadbeef};
     int16_t samples[1600] = {100, -100, 200, -200};
-    const size_t audio_frames = mode == 'T' ? 799 : 2;
+    const size_t audio_frames = mode == 'T' || mode == 'N' ? 799 : 2;
     poll_input();
     unsigned mask = (uint16_t)input(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
     if (input(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A) != !!(mask & 256)) abort();
     if (input(1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A)) abort();
     if (!frames) trace("loaded_byte", memory[4]);
     trace("input", mask);
+    trace("pointer_pressed", input(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_PRESSED));
+    trace("pointer_x", (uint16_t)input(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_X));
+    trace("pointer_y", (uint16_t)input(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_Y));
+    if (input(1, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_PRESSED)) abort();
+    if (input(0, RETRO_DEVICE_POINTER, 1, RETRO_DEVICE_ID_POINTER_PRESSED)) abort();
     memory[0] = mask & 255;
     memory[1] = mask >> 8;
     memory[4] = 123;
@@ -116,7 +135,16 @@ void retro_run(void)
         info.timing.sample_rate = 44100;
         if (!environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info)) abort();
     }
-    video(mode == 'H' ? RETRO_HW_FRAME_BUFFER_VALID : (mode == 'D' && frames > 1 ? NULL : pixels), 3, 2, sizeof(uint32_t) * 4);
+    if (mode == 'N') {
+        static uint32_t ds_pixels[384][257];
+        for (unsigned y = 0; y < 384; y++)
+            for (unsigned x = 0; x < 256; x++)
+                ds_pixels[y][x] = y < 192 ? (x < 128 ? 0xff0000 : 0x00ff00) :
+                    (x < 128 ? 0x0000ff : 0xffffff);
+        video(ds_pixels, 256, 384, sizeof(ds_pixels[0]));
+    } else {
+        video(mode == 'H' ? RETRO_HW_FRAME_BUFFER_VALID : (mode == 'D' && frames > 1 ? NULL : pixels), 3, 2, sizeof(uint32_t) * 4);
+    }
     trace("video_returned", frames);
     audio(10, -10);
     if (batch(mode == 'U' ? NULL : samples, audio_frames) != audio_frames) abort();

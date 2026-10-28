@@ -112,4 +112,18 @@ proc main() =
   doAssert readFile(trace).endsWith("unload=1\ndeinit=1\n")
   doAssert readFile(trace).contains("audio_returned=1\n")
 
+  writeFile(rom, "N")
+  let configured = openCore(core, rom, directory / "options", options = @[("fixture_option", "second")])
+  configured.step(0, PointerInput(x: -1234, y: 2345, pressed: true))
+  configured.step(0)
+  configured.close()
+  doAssert readFile(trace).contains("option_second=1\n")
+  doAssert readFile(trace).contains("pointer_pressed=1\npointer_x=64302\npointer_y=2345\n")
+  doAssert readFile(trace).contains("pointer_pressed=0\npointer_x=0\npointer_y=0\n")
+  for option in [("fixture_option", "invalid"), ("missing", "value")]:
+    rejected = false
+    try: discard openCore(core, rom, directory / "bad-option", options = @[option])
+    except IOError, ValueError: rejected = true
+    doAssert rejected
+
 main()

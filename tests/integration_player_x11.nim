@@ -27,7 +27,7 @@ proc openDisplay(name: string): Display =
     sleep(10)
   raise newException(IOError, "Cannot connect to the isolated X11 test display")
 
-proc findWindow(d: Display): Window =
+proc findWindow(d: Display, suffix = ""): Window =
   ## Locate the child's window on an isolated test display.
   let deadline = getMonoTime() + initDuration(seconds = 5)
   while getMonoTime() < deadline:
@@ -40,7 +40,7 @@ proc findWindow(d: Display): Window =
       for index in 0 ..< int(count):
         var name: cstring
         if fetchName(d, children[index], addr name) != 0 and name != nil:
-          let matched = ($name).startsWith("mono-retro-player |")
+          let matched = ($name).startsWith("mono-retro-player |") and ($name).endsWith(suffix)
           XFree(name)
           if matched:
             var attributes: XWindowAttributes
@@ -69,6 +69,127 @@ proc waitFrames(trace: string, count: int) =
   while frameCount(trace) < count:
     doAssert getMonoTime() < deadline, "Player stopped producing frames"
     sleep(10)
+
+proc mouse(d: Display, window: Window, x, y: int32, button = -1) =
+  ## Inject mouse movement and optional left-button edges into an isolated window.
+  var event = XEvent(motion: XMotionEvent(kind: xeMotion, display: d,
+    window: window, root: d.defaultRootWindow, pos: ivec2(x, y), same_screen: 1))
+  doAssert sendEvent(d, window, 0, 1 shl 6, addr event) != 0
+  if button >= 0:
+    event = XEvent(button: XButtonEvent(kind: if button == 1: xeButtonPress else: xeButtonRelease,
+      display: d, window: window, root: d.defaultRootWindow,
+      pos: ivec2(x, y), button: 1, same_screen: 1))
+    doAssert sendEvent(d, window, 0, if button == 1: 4 else: 8, addr event) != 0
+  d.XFlush()
+
+proc lastValue(trace, key: string): int =
+  ## Read a field from the latest frame whose video callback completed.
+  let contents = readFile(trace)
+  result = -1
+  for line in contents[0 ..< contents.rfind("video_returned=")].splitLines():
+    if line.startsWith(key & "="): result = parseInt(line[key.len + 1 .. ^1])
+
+proc closeWindow(d: Display, window: Window) =
+  ## Ask the application to close through the normal window-manager protocol.
+  var event = XEvent(client: XClientMessageEvent(kind: xeClientMessage,
+    display: d, window: window, message_type: d.XInternAtom("WM_PROTOCOLS", 0), format: 32))
+  event.client.data.l[0] = clong(d.XInternAtom("WM_DELETE_WINDOW", 0))
+  doAssert sendEvent(d, window, 0, 0, addr event) != 0
+  d.XFlush()
+
+proc testDs(d: Display, directory: string) =
+  ## Verify DS screen routing, mouse coordinates, focus and either-window exit.
+  let rom = directory / "ds.test"
+  writeFile(rom, "N")
+  putEnv("ALSOFT_DRIVERS", "null")
+  for mode in 0 .. 2:
+    let
+      separate = mode != 0
+      trace = directory / ("ds-trace-" & $mode)
+      layout = if separate: "separate" else: "combined"
+    putEnv("MONO_RETRO_FIXTURE_TRACE", trace)
+    let process = startProcess(absolutePath("build/mono-retro-player"), args = [
+      "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
+      "--save-dir:" & directory / ("ds-save-" & $mode), "--ds-layout:" & layout],
+      options = {poParentStreams})
+    defer:
+      if process.running(): process.terminate()
+      discard process.waitForExit(5000)
+      process.close()
+    let
+      top = findWindow(d, if separate: " | Top" else: "")
+      touch = if separate: findWindow(d, " | Touch") else: top
+    d.XMoveWindow(top, 0, 0)
+    if separate: d.XMoveWindow(touch, 400, 0)
+    d.XSetInputFocus(touch, rtRoot)
+    d.XSync(false)
+    waitFrames(trace, 3)
+    var attributes: XWindowAttributes
+    d.XGetWindowAttributes(touch, addr attributes)
+    doAssert attributes.size == ivec2(256, if separate: 192 else: 384)
+    let captured = getImage(d, top, 0, 0, 256, 192, high(culong), 2)
+    doAssert captured != nil
+    doAssert (getPixel(captured, 32, 32) and 0xffffff) == 0xff0000
+    discard destroyImage(captured)
+    d.XResizeWindow(touch, 522, if separate: 394 else: 778)
+    d.XSync(false)
+    waitFrames(trace, frameCount(trace) + 3)
+    let
+      touchY = if separate: 133'i32 else: 517'i32
+      pixels = getImage(d, touch, 0, 0, 522, if separate: 394 else: 778, high(culong), 2)
+    doAssert pixels != nil
+    doAssert (getPixel(pixels, 0, 0) and 0xffffff) == 0
+    doAssert (getPixel(pixels, 133, touchY) and 0xffffff) == 0x0000ff
+    discard destroyImage(pixels)
+    mouse(d, touch, 133, touchY, 1)
+    waitFrames(trace, frameCount(trace) + 3)
+    doAssert lastValue(trace, "pointer_pressed") == 1,
+      "Pointer X=" & $lastValue(trace, "pointer_x") & " Y=" & $lastValue(trace, "pointer_y")
+    let
+      pointerX = cast[int16](lastValue(trace, "pointer_x").uint16).int
+      pointerY = cast[int16](lastValue(trace, "pointer_y").uint16).int
+    doAssert (pointerX + 32767) * 256 div 65534 == 64
+    doAssert (pointerY + 32767) * 384 div 65534 == 256
+    mouse(d, touch, 173, touchY)
+    waitFrames(trace, frameCount(trace) + 3)
+    doAssert lastValue(trace, "pointer_pressed") == 1
+    doAssert lastValue(trace, "pointer_x") != cast[uint16](int16(pointerX)).int
+    mouse(d, touch, 0, 0)
+    waitFrames(trace, frameCount(trace) + 3)
+    doAssert lastValue(trace, "pointer_pressed") == 0
+    mouse(d, touch, 133, touchY)
+    waitFrames(trace, frameCount(trace) + 3)
+    doAssert lastValue(trace, "pointer_pressed") == 1
+    mouse(d, touch, 133, touchY, 0)
+    waitFrames(trace, frameCount(trace) + 3)
+    doAssert lastValue(trace, "pointer_pressed") == 0
+    if separate:
+      d.XSetInputFocus(top, rtRoot)
+      d.XFlush()
+      waitFrames(trace, frameCount(trace) + 3)
+      mouse(d, top, 64, 64, 1)
+      key(d, top, 0x77, true)
+      waitFrames(trace, frameCount(trace) + 3)
+      doAssert lastValue(trace, "pointer_pressed") == 0
+      doAssert lastValue(trace, "input") == 512
+      key(d, top, 0x77, false)
+      mouse(d, top, 64, 64, 0)
+      d.XGetWindowAttributes(top, addr attributes)
+      doAssert attributes.size == ivec2(256, 192)
+    d.XSetInputFocus(d.defaultRootWindow, rtRoot)
+    d.XFlush()
+    sleep(100)
+    let paused = frameCount(trace)
+    sleep(150)
+    doAssert frameCount(trace) == paused
+    d.XSetInputFocus(touch, rtRoot)
+    d.XFlush()
+    waitFrames(trace, paused + 3)
+    doAssert lastValue(trace, "pointer_pressed") == 0
+    closeWindow(d, if mode == 2: touch else: top)
+    doAssert process.waitForExit(5000) == 0
+    doAssert readFile(trace).endsWith("unload=1\ndeinit=1\n")
+  delEnv("MONO_RETRO_FIXTURE_TRACE")
 
 proc main() =
   ## Check presentation, input, pausing and shutdown on isolated Xvfb.
@@ -157,6 +278,28 @@ proc main() =
     let contents = readFile(directory / "saves/fixture.srm")
     doAssert contents.len == 16 and contents[4] == char(123)
     doAssert readFile(trace).endsWith("unload=1\ndeinit=1\n")
+  testDs(d, directory)
+  if paramCount() == 3:
+    putEnv("ALSOFT_DRIVERS", "null")
+    let seed = readFile(paramStr(3))
+    for layout in ["combined", "separate"]:
+      let saves = directory / ("melonds-" & layout)
+      createDir(saves)
+      copyFile(paramStr(3), saves / paramStr(2).splitFile.name & ".srm")
+      let process = startProcess(absolutePath("build/mono-retro-player"), args = [
+        "--core:" & absolutePath(paramStr(1)), "--rom:" & absolutePath(paramStr(2)),
+        "--save-dir:" & saves, "--ds-layout:" & layout, "--frames:180"],
+        options = {poParentStreams})
+      defer:
+        if process.running(): process.terminate()
+        discard process.waitForExit(5000)
+        process.close()
+      let window = findWindow(d, if layout == "separate": " | Touch" else: "")
+      d.XSetInputFocus(window, rtRoot)
+      d.XFlush()
+      doAssert process.waitForExit(30000) == 0
+      doAssert getFileSize(saves / paramStr(2).splitFile.name & ".srm") > 0
+    doAssert readFile(paramStr(3)) == seed
   if paramCount() == 2:
     putEnv("ALSOFT_DRIVERS", "null")
     let process = startProcess(absolutePath("build/mono-retro-player"), args = [
