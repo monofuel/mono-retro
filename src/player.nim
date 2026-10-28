@@ -7,6 +7,7 @@ import
 const
   SaveIntervalSeconds = 5
   PollIntervalMs = 2
+  NanosecondsPerMillisecond = 1_000_000
   ExitHoldSeconds = 2
   Help = """Usage: mono-retro-player --core:PATH --rom:PATH --save-dir:DIR [--frames:N] [--mute]
 Libretro player with Slappy audio. --mute opens no audio device.
@@ -114,7 +115,8 @@ proc main() =
       continue
     paused = false
     if now.ticks < clock.deadline:
-      sleep(PollIntervalMs)
+      let remainingMs = int((clock.deadline - now.ticks) div NanosecondsPerMillisecond)
+      sleep(min(PollIntervalMs, remainingMs))
       continue
     var held: set[Button]
     for (key, button) in KeyboardButtons:

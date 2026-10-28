@@ -60,15 +60,32 @@ proc fitFrame*(source, previous: Image, width, height: int): Image =
     viewHeight = source.height * scale
     left = (width - viewWidth) div 2
     top = (height - viewHeight) div 2
-  for sourceY in 0 ..< source.height:
+    startX = max(0, -left)
+    endX = min(source.width, width - left)
+    rowWidth = min(width, viewWidth)
+  # The clipped rows and integer scale bound every offset to the image storage.
+  {.push overflowChecks: off.}
+  for sourceY in max(0, -top) ..< min(source.height, height - top):
     let targetY = top + sourceY * scale
-    if targetY < 0 or targetY >= height: continue
-    var targetX = left
-    for sourceX in 0 ..< source.width:
-      let pixel = sourcePixels[sourceY * source.width + sourceX]
-      for x in max(0, targetX) ..< min(width, targetX + scale):
-        targetPixels[targetY * width + x] = pixel
-      targetX += scale
+    let
+      sourceRow = cast[ptr UncheckedArray[ColorRGBX]](
+        addr sourcePixels[sourceY * source.width])
+      targetRow = cast[ptr UncheckedArray[ColorRGBX]](
+        addr targetPixels[targetY * width + max(0, left)])
+    if scale == 1:
+      copyMem(targetRow, addr sourceRow[startX], rowWidth * sizeof(ColorRGBX))
+    else:
+      template expandRow(factor: int) =
+        for sourceX in startX ..< endX:
+          let pixel = sourceRow[sourceX]
+          for repeat in 0 ..< factor:
+            targetRow[sourceX * factor + repeat] = pixel
+      case scale
+      of 2: expandRow(2)
+      of 3: expandRow(3)
+      of 4: expandRow(4)
+      else: expandRow(scale)
     for y in targetY + 1 ..< min(height, targetY + scale):
-      copyMem(addr targetPixels[y * width], addr targetPixels[targetY * width],
-        width * sizeof(ColorRGBX))
+      copyMem(addr targetPixels[y * width + max(0, left)], targetRow,
+        rowWidth * sizeof(ColorRGBX))
+  {.pop.}

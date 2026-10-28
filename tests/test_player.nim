@@ -33,7 +33,9 @@ block:
     rgbx(255, 255, 255, 255), rgbx(128, 128, 128, 255), rgbx(255, 255, 0, 255)]
   var canvas: Image
   for (width, height, scale, left, top) in [
-      (3, 2, 1, 0, 0), (8, 5, 2, 1, 0), (11, 8, 3, 1, 1), (4, 9, 1, 0, 3)]:
+      (3, 2, 1, 0, 0), (8, 5, 2, 1, 0), (11, 8, 3, 1, 1),
+      (14, 11, 4, 1, 1), (17, 13, 5, 1, 1), (4, 9, 1, 0, 3),
+      (1, 1, 1, -1, 0), (1, 5, 1, -1, 1), (7, 1, 1, 2, 0)]:
     canvas = fitFrame(source, canvas, width, height)
     for y in 0 ..< height:
       for x in 0 ..< width:
@@ -44,6 +46,12 @@ block:
         doAssert canvas.data[y * width + x] == expected
   let clipped = fitFrame(source, canvas, 1, 2)
   doAssert clipped.data == @[source.data[1], source.data[4]]
+  canvas = fitFrame(source, canvas, 8, 5)
+  source.fill(rgbx(12, 34, 56, 255))
+  doAssert fitFrame(source, canvas, 8, 5) == canvas
+  doAssert canvas.data[1] == source.data[0]
+  doAssert canvas.data[0] == rgbx(0, 0, 0, 255)
+  doAssert fitFrame(nil, canvas, 8, 5).isOneColor()
 
 block:
   doAssert keyboardButtons({KeyX, KeyUp, KeyEnter}) == ((1'u16 shl 8) or (1'u16 shl 4) or (1'u16 shl 3))
