@@ -12,6 +12,7 @@ type
 const
   DsWidth* = 256
   DsHeight* = 192
+  ShowDsTouchCursor* = false
   PointerMaximum = 32767
   # Software is the pinned core's default; software-only builds omit its renderer option.
   DsOptions* = @[
@@ -19,6 +20,7 @@ const
     ("melonds_screen_gap", "0"),
     ("melonds_number_of_screen_layouts", "1"),
     ("melonds_touch_mode", "touch"),
+    ("melonds_show_cursor", if ShowDsTouchCursor: "always" else: "disabled"),
     ("melonds_mic_input", "silence")
   ]
 

@@ -47,6 +47,7 @@ void retro_init(void)
         {"melonds_screen_gap", "Gap; 0|1"},
         {"melonds_number_of_screen_layouts", "Layouts; 1|2"},
         {"melonds_touch_mode", "Touch; touch|auto"},
+        {"melonds_show_cursor", "Cursor; always|disabled"},
         {"melonds_mic_input", "Mic; silence|noise"},
         {NULL, NULL}
     };

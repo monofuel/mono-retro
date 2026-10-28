@@ -122,6 +122,8 @@ options fail explicitly. Our Windy fork includes the X11 event-predicate ABI fix
 needed to route focus and mouse input independently between the two windows.
 
 The tested cartridge boots with the core's built-in FreeBIOS and firmware.
+The core's touch cursor is hidden. Set the compile-time `ShowDsTouchCursor`
+constant in `src/retro/playerds.nim` to `true` to show it for diagnostics.
 Audio output uses Slappy as usual. Microphone input is disabled for this MVP;
 Lost in Blue interactions requiring blowing remain unavailable. Switching
 layouts during play is deferred.
