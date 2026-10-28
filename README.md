@@ -42,8 +42,16 @@ Build both applications with `make launcher-desktop`, or cross-build with
 and `/usr/local/bin/mono-retro-hwtest`. Existing tester build targets remain.
 Build desktop and cross targets sequentially.
 
-The font is embedded; no system font installation is needed. Battery sources
-are profile-owned (`batterySupply`): axp2202 on SP and cw2015 on DS Plus.
+The font is embedded; no system font installation is needed. Battery percentage
+sources are profile-owned (`batterySupply`): axp2202 on SP and cw2015 on DS Plus.
+The toolbar separates "Plugged in" from charging state. When external power is
+connected but battery current is negative, it shows "Battery draining" in amber.
+System Info explains the power deficit and shows signed battery current in mA.
+DS Plus uses `batteryCurrentSupply: "battery"` for RK817 current while retaining
+CW2015 percentage. A missing or invalid explicitly configured current source
+shows "Charge state unknown". Without an explicit source, the selected gauge's
+current is used when available, otherwise its reported status; the RG SP vendor
+driver exposes no battery current, so it uses reported status.
 System Info shows all reported gauges separately. Telemetry reads local
 `/proc`, `/sys`, OS-release and `ip -j address show`; no network service,
 credentials or router access is involved. Invalid readings remain unavailable.

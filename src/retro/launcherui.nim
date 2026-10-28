@@ -22,6 +22,7 @@ const
   MutedColor = 0x9eafc2'u32
   AccentColor = 0x67c7ae'u32
   ErrorColor = 0xffa08e'u32
+  WarningColor = 0xffcd7d'u32
   Margin = 28
   ToolbarHeight = 64
   RowHeight = 68
@@ -67,18 +68,23 @@ proc label(ui: LauncherUi, image: Image, text: string, x, y: int,
   image.fillText(ui.font.typeset(text), translate(vec2(x.float32, y.float32)))
 
 proc toolbar(ui: LauncherUi, image: Image, title: string, power: PowerStatus) =
-  ## Show kernel-reported power status on the primary screen.
+  ## Keep connection state and battery flow visible as separate toolbar lines.
   image.rect(0, 0, image.width, ToolbarHeight, PanelColor)
   ui.label(image, title, Margin, 20, 22)
   let
     x = max(image.width div 2, image.width - 315)
     reading = power.selectedBattery()
+    draining = power.external and power.batteryFlow() == DischargingFlow
+    tint = if draining: WarningColor else: AccentColor
   image.rect(x, 25, 32, 18, MutedColor)
   image.rect(x + 32, 30, 3, 8, MutedColor)
   image.rect(x + 2, 27, 28, 14, BackgroundColor)
   if reading.percent >= 0:
-    image.rect(x + 3, 28, 26 * reading.percent div 100, 12, AccentColor)
-  ui.label(image, power.batteryText(), x + 46, 23, 18)
+    image.rect(x + 3, 28, 26 * reading.percent div 100, 12, tint)
+  ui.label(image, power.batteryText(), x + 46, if power.external: 10 else: 23, 18)
+  if power.external:
+    ui.label(image, power.chargeText(), x + 46, 35, 16,
+      if draining: WarningColor else: TextColor)
 
 proc render*(ui: LauncherUi, state: MenuState, title: string, power: PowerStatus,
     lines: seq[string], width, height: int, role: ScreenRole): tuple[image: Image, maxScroll: int] =

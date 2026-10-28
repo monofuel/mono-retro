@@ -55,7 +55,7 @@ proc main() =
     screen: Display
     backInputs: seq[InputDevice]
     state: MenuState
-    power = readPower(settings.batterySupply)
+    power = readPower(settings.batterySupply, currentSupply = settings.batteryCurrentSupply)
     network = localNetwork()
     lastBattery = getMonoTime()
     lastNetwork = getMonoTime()
@@ -197,7 +197,7 @@ proc main() =
     pending.setLen(0)
     if action == QuitLauncher: break
     if action in {RebootSystem, ShutdownSystem}:
-      power = readPower(settings.batterySupply)
+      power = readPower(settings.batterySupply, currentSupply = settings.batteryCurrentSupply)
       state.error = power.powerBlockReason()
       if state.error.len == 0:
         state.busy = true
@@ -227,7 +227,7 @@ proc main() =
       dirty = true
     let now = getMonoTime()
     if (now - lastBattery).inMilliseconds >= BatteryIntervalMs:
-      let updated = readPower(settings.batterySupply)
+      let updated = readPower(settings.batterySupply, currentSupply = settings.batteryCurrentSupply)
       if power != updated:
         power = updated
         dirty = true

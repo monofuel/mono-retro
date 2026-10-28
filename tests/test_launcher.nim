@@ -1,5 +1,5 @@
 import
-  std/[json, monotimes, os, osproc, times],
+  std/[json, monotimes, options, os, osproc, strutils, times],
   pixie,
   retro/[launcherui, menu, powercontrol, settings, systeminfo, testerprocess]
 
@@ -93,11 +93,43 @@ block:
   var power = readPower("cw2015-battery", fixture)
   doAssert power.external and power.batteries.len == 2
   doAssert power.selectedBattery().percent == 59
-  doAssert power.batteryText() == "59%  On battery"
+  doAssert power.batteryText() == "59% · Plugged in"
+  doAssert power.chargeText() == "Battery draining"
   writeFile(fixture / "cw2015-battery/status", "Charging")
-  doAssert readPower("cw2015-battery", fixture).batteryText() == "59%  Charging"
+  doAssert readPower("cw2015-battery", fixture).chargeText() == "Charging"
   writeFile(fixture / "cw2015-battery/status", "Full")
-  doAssert readPower("cw2015-battery", fixture).batteryText() == "59%  Full"
+  doAssert readPower("cw2015-battery", fixture).chargeText() == "Full"
+  writeFile(fixture / "cw2015-battery/status", "Charging")
+  writeFile(fixture / "battery/status", "Charging")
+  writeFile(fixture / "cw2015-battery/current_now", "0")
+  writeFile(fixture / "battery/current_now", "-195000")
+  power = readPower("cw2015-battery", fixture, "battery")
+  doAssert power.selectedBattery().percent == 59
+  doAssert power.selectedBattery().currentMicroamps == some(0)
+  doAssert power.batteryFlow() == DischargingFlow
+  doAssert power.chargeText() == "Battery draining"
+  doAssert "External power is not keeping up with use." in power.powerLines()
+  doAssert power.powerLines().join("\n").contains("-195 mA")
+  writeFile(fixture / "cw2015-battery/status", "Discharging")
+  writeFile(fixture / "battery/current_now", "350000")
+  doAssert readPower("cw2015-battery", fixture, "battery").chargeText() == "Charging"
+  writeFile(fixture / "battery/current_now", "0")
+  doAssert readPower("cw2015-battery", fixture, "battery").chargeText() == "Not charging"
+  writeFile(fixture / "cw2015-battery/status", "Full")
+  doAssert readPower("cw2015-battery", fixture, "battery").chargeText() == "Full"
+  writeFile(fixture / "battery/current_now", "not a number")
+  power = readPower("cw2015-battery", fixture, "battery")
+  doAssert power.chargeText() == "Charge state unknown"
+  doAssert power.batteries[0].percent == 40
+  doAssert power.batteries[0].error.len > 0
+  removeFile(fixture / "battery/current_now")
+  doAssert readPower("cw2015-battery", fixture, "battery").chargeText() == "Charge state unknown"
+  doAssert readPower("cw2015-battery", fixture, "missing").chargeText() == "Charge state unknown"
+  writeFile(fixture / "battery/current_now", "-195000")
+  writeFile(fixture / "usb/online", "0")
+  power = readPower("cw2015-battery", fixture, "battery")
+  doAssert power.batteryText() == "59% · On battery"
+  doAssert power.chargeText() == ""
   writeFile(fixture / "cw2015-battery/capacity", "999")
   power = readPower("cw2015-battery", fixture)
   doAssert power.selectedBattery().percent == -1
@@ -106,6 +138,8 @@ block:
   doAssert readPower("", fixture / "missing").batteries.len == 0
   doAssert parseSettings(@[], rgSpDevice).batterySupply == "axp2202-battery"
   doAssert parseSettings(@[], rgDsPlusDevice).batterySupply == "cw2015-battery"
+  doAssert parseSettings(@[], rgSpDevice).batteryCurrentSupply == ""
+  doAssert parseSettings(@[], rgDsPlusDevice).batteryCurrentSupply == "battery"
 
 block:
   doAssert osName("NAME=Linux\nPRETTY_NAME=\"Gentoo Linux\"\n") == "Gentoo Linux"
@@ -136,6 +170,14 @@ block:
     doAssert not areas.cancel.contains(vec2(areas.confirm.x.float32 + 1, areas.confirm.y.float32 + 1))
     doAssert ui.render(MenuState(confirmation: ShutdownSystem), "Test", PowerStatus(),
       @[], width, height, role).image.height == height
+    if role != BottomScreen:
+      let
+        power = PowerStatus(selected: "battery", external: true,
+          batteries: @[BatteryReading(name: "battery", percent: 60,
+            status: "Charging", currentMicroamps: some(-195000))])
+        draining = ui.render(MenuState(), "Test", power, @[], width, height, role)
+        iconX = max(width div 2, width - 315) + 3
+      doAssert draining.image[iconX, 28] == rgbx(255, 205, 125, 255)
   var lines: seq[string]
   for index in 0 ..< 100: lines.add "Long information page " & $index
   doAssert ui.render(MenuState(info: true), "Test", PowerStatus(), lines,

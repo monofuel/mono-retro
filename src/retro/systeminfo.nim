@@ -1,22 +1,28 @@
 import
-  std/[algorithm, json, os, osproc, posix, streams, strutils]
+  std/[algorithm, json, options, os, osproc, posix, streams, strutils]
 
 type
   BatteryReading* = object
     name*, status*, error*: string
     percent*: int
+    currentMicroamps*: Option[int]
+  BatteryFlow* = enum
+    UnknownFlow, ChargingFlow, DischargingFlow, FullFlow, IdleFlow
   PowerStatus* = object
     batteries*: seq[BatteryReading]
     selected*: string
+    currentSupply*: string
     external*: bool
 
 proc readValue(path: string): string =
   ## Read an optional OS attribute without inventing a value.
   if fileExists(path): readFile(path).strip() else: ""
 
-proc readPower*(selected: string, root = "/sys/class/power_supply"): PowerStatus =
+proc readPower*(selected: string, root = "/sys/class/power_supply",
+    currentSupply = ""): PowerStatus =
   ## Read independent kernel gauges, retaining failures for the information view.
   result.selected = selected
+  result.currentSupply = currentSupply
   var paths: seq[string]
   for path in walkDirs(root / "*"): paths.add path
   paths.sort()
@@ -36,6 +42,13 @@ proc readPower*(selected: string, root = "/sys/class/power_supply"): PowerStatus
           reading.percent = percent
         except ValueError as error:
           reading.error = error.msg
+      try:
+        let current = readValue(path / "current_now")
+        if current.len > 0:
+          reading.currentMicroamps = some(parseInt(current))
+      except ValueError, IOError, OSError:
+        if reading.error.len > 0: reading.error &= "; "
+        reading.error &= "Current unavailable: " & getCurrentExceptionMsg()
       result.batteries.add reading
     except IOError, OSError:
       result.batteries.add BatteryReading(name: path.extractFilename(),
@@ -49,17 +62,41 @@ proc selectedBattery*(power: PowerStatus): BatteryReading =
     if reading.name == power.selected: return reading
   BatteryReading(name: power.selected, percent: -1)
 
+proc batteryFlow*(power: PowerStatus): BatteryFlow =
+  ## Prefer signed battery current over a driver's charger-presence status.
+  let
+    selected = power.selectedBattery()
+    source = if power.currentSupply.len > 0: power.currentSupply else: power.selected
+  for reading in power.batteries:
+    if reading.name == source and reading.currentMicroamps.isSome:
+      let current = reading.currentMicroamps.get()
+      if current < 0: return DischargingFlow
+      if current > 0: return ChargingFlow
+      return if selected.status == "Full": FullFlow else: IdleFlow
+  if power.currentSupply.len > 0: return UnknownFlow
+  case selected.status
+  of "Charging": ChargingFlow
+  of "Discharging": DischargingFlow
+  of "Full": FullFlow
+  of "Not charging": IdleFlow
+  else: UnknownFlow
+
 proc batteryText*(power: PowerStatus): string =
-  ## Distinguish charging from merely having external power connected.
+  ## Show battery percentage and external-power connection independently of flow.
   let reading = power.selectedBattery()
   result = if reading.percent >= 0: $reading.percent & "%" else: "Battery —"
-  case reading.status
-  of "Charging": result &= "  Charging"
-  of "Full": result &= "  Full"
-  of "Discharging": result &= "  On battery"
-  of "Not charging": result &= "  Not charging"
-  else:
-    result &= (if power.external: "  External power" else: "  Unknown")
+  if power.external: result &= " · Plugged in"
+  elif reading.percent >= 0: result &= " · On battery"
+
+proc chargeText*(power: PowerStatus): string =
+  ## Describe battery flow while plugged in, including an unavailable measurement.
+  if not power.external: return ""
+  case power.batteryFlow()
+  of ChargingFlow: "Charging"
+  of DischargingFlow: "Battery draining"
+  of FullFlow: "Full"
+  of IdleFlow: "Not charging"
+  of UnknownFlow: "Charge state unknown"
 
 proc osName*(contents: string): string =
   ## Parse os-release as data, never as a shell script.
@@ -114,8 +151,19 @@ proc localNetwork*(): seq[string] =
 
 proc powerLines*(power: PowerStatus): seq[string] =
   ## Show each gauge separately to make device-specific reporting visible.
+  if power.external:
+    result.add "Plugged in: " & power.chargeText()
+    if power.batteryFlow() == DischargingFlow:
+      result.add "External power is not keeping up with use."
+  else:
+    result.add "External power not detected"
+  if power.currentSupply.len > 0:
+    result.add "Battery current source: " & power.currentSupply
   if power.batteries.len == 0: result.add "No battery detected"
   for reading in power.batteries:
     let percent = if reading.percent >= 0: $reading.percent & "%" else: "Unavailable"
     result.add reading.name & " (gauge): " & percent & "  " & reading.status
+    if reading.currentMicroamps.isSome:
+      let milliamps = reading.currentMicroamps.get() div 1000
+      result.add "  Battery current: " & $milliamps & " mA (positive = charging)"
     if reading.error.len > 0: result.add "  " & reading.error
