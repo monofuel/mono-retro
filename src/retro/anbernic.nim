@@ -45,3 +45,10 @@ proc mapAnbernic*(pad: Gamepad): Gamepad =
       axis = if button == GamepadL2: GamepadLTrigger else: GamepadRTrigger
     result.pressures[button.int] = value
     result.axes[axis.int] = value
+
+proc leftStickYUp*(pad: Gamepad): float32 =
+  ## Read an app-mapped pad's stick with positive Y pointing up.
+  result = pad.axis(GamepadLStickY)
+  when defined(linux):
+    # Native evdev Y points down; the DS Plus adapter above already flips it.
+    if pad.name != "ANBERNIC-rk3568-keys": result = -result

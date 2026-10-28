@@ -56,8 +56,10 @@ artifacts, not Nim dependencies; no SDL frontend is used.
 | Escape | Save and exit |
 
 The first connected Paddy controller (lowest device ID) maps physical RetroPad
-positions: east is GBA A, south is GBA B, shoulders are L/R. The D-pad is used;
-analog stick conversion is outside this MVP. Keyboard and controller buttons
+positions: east is A, south is B, north is X and west is Y; shoulders are L/R.
+The left stick also supplies eight-way D-pad input past half travel on either
+axis. Digital D-pad input takes precedence on the same axis. The right stick
+does not move the D-pad. Keyboard and controller buttons
 combine. Unplugging the controller removes its held buttons. Device-specific
 mapping remains an application concern.
 

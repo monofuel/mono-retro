@@ -1,9 +1,13 @@
 import
-  paddy, windy
+  paddy, windy,
+  ./anbernic
 
 const
-  RetroButtons* = [GamepadA, GamepadY, GamepadSelect, GamepadStart,
-    GamepadUp, GamepadDown, GamepadLeft, GamepadRight, GamepadB, GamepadX,
+  StickDpadThreshold* = 0.5'f32
+  HorizontalDpad = (1'u16 shl 6) or (1'u16 shl 7)
+  VerticalDpad = (1'u16 shl 4) or (1'u16 shl 5)
+  RetroButtons* = [GamepadA, GamepadX, GamepadSelect, GamepadStart,
+    GamepadUp, GamepadDown, GamepadLeft, GamepadRight, GamepadB, GamepadY,
     GamepadL1, GamepadR1, GamepadL2, GamepadR2, GamepadL3, GamepadR3]
   KeyboardButtons* = [(KeyZ, 0), (KeyBackspace, 2), (KeyEnter, 3),
     (KeyUp, 4), (KeyDown, 5), (KeyLeft, 6), (KeyRight, 7),
@@ -18,10 +22,19 @@ proc firstGamepad*(pads: seq[Gamepad]): Gamepad =
   pads[chosen]
 
 proc gamepadButtons*(pads: seq[Gamepad]): uint16 =
-  ## Map one controller's physical positions to the standard RetroPad layout.
-  let pad = firstGamepad(pads)
+  ## Map RetroPad positions and the left stick, preferring digital D-pad axes.
+  let
+    pad = firstGamepad(pads)
+    x = pad.axis(GamepadLStickX)
+    y = pad.leftStickYUp()
   for index, button in RetroButtons:
     if pad.button(button): result = result or (1'u16 shl index)
+  if (result and HorizontalDpad) == 0:
+    if x <= -StickDpadThreshold: result = result or (1'u16 shl 6)
+    elif x >= StickDpadThreshold: result = result or (1'u16 shl 7)
+  if (result and VerticalDpad) == 0:
+    if y >= StickDpadThreshold: result = result or (1'u16 shl 4)
+    elif y <= -StickDpadThreshold: result = result or (1'u16 shl 5)
 
 proc keyboardButtons*(held: set[Button]): uint16 =
   ## Map the desktop's documented keyboard controls to the same RetroPad.

@@ -67,6 +67,38 @@ block:
   doAssert firstGamepad(@[]).buttons == 0
 
 block:
+  for (button, retroId) in [(GamepadA, 0), (GamepadB, 8), (GamepadX, 1), (GamepadY, 9)]:
+    doAssert gamepadButtons(@[Gamepad(id: 0, buttons: 1'u64 shl button.int)]) == 1'u16 shl retroId
+  for name in ["ANBERNIC-keys", "ANBERNIC-rk3568-keys"]:
+    for (button, retroId) in [(GamepadA, 8), (GamepadB, 0), (GamepadC, 1), (GamepadY, 9)]:
+      let pad = mapAnbernic(Gamepad(id: 0, name: name, buttons: 1'u64 shl button.int))
+      doAssert gamepadButtons(@[pad]) == 1'u16 shl retroId
+  var pad = Gamepad(id: 0)
+  for (x, up, expected) in [
+      (0'f32, 0'f32, 0'u16), (0.49'f32, -0.49'f32, 0'u16),
+      (-0.5'f32, 0'f32, 1'u16 shl 6), (0.5'f32, 0'f32, 1'u16 shl 7),
+      (0'f32, 0.5'f32, 1'u16 shl 4), (0'f32, -0.5'f32, 1'u16 shl 5),
+      (-1'f32, 1'f32, (1'u16 shl 6) or (1'u16 shl 4)),
+      (1'f32, 1'f32, (1'u16 shl 7) or (1'u16 shl 4)),
+      (-1'f32, -1'f32, (1'u16 shl 6) or (1'u16 shl 5)),
+      (1'f32, -1'f32, (1'u16 shl 7) or (1'u16 shl 5))]:
+    pad.axes[GamepadLStickX.int] = x
+    when defined(linux): pad.axes[GamepadLStickY.int] = -up
+    else: pad.axes[GamepadLStickY.int] = up
+    doAssert gamepadButtons(@[pad]) == expected
+  pad.buttons = (1'u64 shl GamepadLeft.int) or (1'u64 shl GamepadUp.int)
+  doAssert gamepadButtons(@[pad]) == ((1'u16 shl 6) or (1'u16 shl 4))
+  pad = Gamepad(id: 0)
+  doAssert gamepadButtons(@[pad]) == 0
+  pad.axes[GamepadRStickX.int] = 1
+  pad.axes[GamepadRStickY.int] = 1
+  doAssert gamepadButtons(@[pad]) == 0
+  pad = Gamepad(id: 0, name: "ANBERNIC-rk3568-keys")
+  pad.axes[GamepadRStickX.int] = -1
+  doAssert gamepadButtons(@[pad.mapAnbernic()]) == 1'u16 shl 4
+  doAssert gamepadButtons(@[]) == 0
+
+block:
   var clock = newFrameClock(59.7275, 100)
   doAssert clock.period == int64(1_000_000_000.0 / 59.7275)
   clock.advance(100)
