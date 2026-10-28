@@ -17,6 +17,6 @@ proc runTester*(path: string, arguments: seq[string],
     if terminated and getMonoTime() >= deadline:
       process.kill()
       discard process.waitForExit()
-      raise newException(IOError, "Hardware tester did not stop after SIGTERM")
+      raise newException(IOError, "Child application did not stop after SIGTERM")
     sleep(8)
   process.waitForExit()

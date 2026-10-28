@@ -8,7 +8,7 @@ proc main() =
   doAssert paramCount() == 2, "Supply the mGBA core path and an uncompressed Mother 3 ROM."
   let
     directory = createTempDir("player-mgba-", "")
-    session = openCore(paramStr(1), paramStr(2), directory)
+    session = openCore(paramStr(1), paramStr(2), directory, captureAudio = true)
   defer: removeDir(directory)
   try:
     doAssert ($session.info.libraryName).toLowerAscii.contains("mgba")
@@ -16,6 +16,8 @@ proc main() =
     var varied = false
     for frame in 0 ..< 1800:
       session.step(if frame mod 120 < 10: 1'u16 shl 3 else: 0'u16)
+      let samples = session.takeAudio()
+      doAssert samples.len > 0 and samples.len mod 2 == 0
       for pixel in session.image.data:
         if pixel != session.image.data[0]: varied = true
     doAssert session.image.width == 240 and session.image.height == 160

@@ -1,6 +1,6 @@
 type
   MenuAction* = enum
-    NoAction, LaunchTester, QuitLauncher, RebootSystem, ShutdownSystem
+    NoAction, LaunchTester, QuitLauncher, RebootSystem, ShutdownSystem, LaunchDecompbound
   MenuState* = object
     selected*: int
     info*: bool
@@ -13,7 +13,7 @@ type
     Previous, Next, Open, Back
 
 const
-  MenuLabels* = ["Hardware Test", "System Info", "Reboot", "Shut Down"]
+  MenuLabels* = ["Decompbound", "Hardware Test", "System Info", "Reboot", "Shut Down"]
   ScrollStep* = 48
 
 proc handle*(state: var MenuState, input: MenuInput, desktop: bool): MenuAction =
@@ -42,12 +42,13 @@ proc handle*(state: var MenuState, input: MenuInput, desktop: bool): MenuAction 
   of Open:
     if not state.armed or state.info: return NoAction
     case state.selected
-    of 0: return LaunchTester
-    of 1:
+    of 0: return LaunchDecompbound
+    of 1: return LaunchTester
+    of 2:
       state.info = true
       state.scroll = 0
     else:
-      state.confirmation = if state.selected == 2: RebootSystem else: ShutdownSystem
+      state.confirmation = if state.selected == 3: RebootSystem else: ShutdownSystem
       state.confirmYes = false
       state.armed = false
       state.error = ""

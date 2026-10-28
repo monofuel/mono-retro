@@ -3,6 +3,7 @@ let
   runtime = with pkgs; [
     systemd
     libevdev
+    openal
     xorg.libX11
     xorg.libXcursor
   ];

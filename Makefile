@@ -9,6 +9,7 @@ check:
 	nim check tests/test_launcher.nim
 	nim check tests/test_player.nim
 	nim check tests/test_playercore.nim
+	nim check tests/test_playeraudio.nim
 test:
 	mkdir -p build
 	nim r tests/test_hardware.nim
@@ -56,10 +57,13 @@ launcher-handhelds: handhelds
 test-launcher-x11: launcher-desktop
 	nim r tests/integration_launcher_x11.nim
 
-.PHONY: player-desktop player-fixtures test-player test-player-x11
+.PHONY: player-desktop player-rg-ds-plus player-fixtures test-player test-player-x11
 player-desktop:
 	mkdir -p build
 	MONO_RETRO_BACKENDS=x11 nim c -o:build/mono-retro-player src/player.nim
+player-rg-ds-plus:
+	mkdir -p build
+	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=drm nim c -o:build/mono-retro-player-rg-ds-plus src/player.nim
 player-fixtures:
 	mkdir -p build
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC tests/fixtures/player_core.c -o build/player-fixture.so
@@ -68,5 +72,6 @@ player-fixtures:
 test-player: player-fixtures
 	nim r -o:build/test-player tests/test_player.nim
 	nim r -o:build/test-playercore tests/test_playercore.nim
+	ALSOFT_DRIVERS=null nim r -o:build/test-playeraudio tests/test_playeraudio.nim
 test-player-x11: player-desktop player-fixtures
 	nim r -o:build/integration-player-x11 tests/integration_player_x11.nim

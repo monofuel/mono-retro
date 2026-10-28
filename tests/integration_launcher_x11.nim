@@ -49,7 +49,9 @@ proc main() =
     testDisplay = getEnv("MONO_RETRO_TEST_DISPLAY")
     fixture = getTempDir() / ("mono-retro-x11-" & $getCurrentProcessId())
     tester = fixture / "tester"
+    game = fixture / "decompbound"
     marker = fixture / "launches"
+    gameMarker = fixture / "games"
     powerMarker = fixture / "power-requests"
     originalPath = getEnv("PATH")
   doAssert testDisplay.len > 0, "Set MONO_RETRO_TEST_DISPLAY to an isolated Xvfb display."
@@ -65,10 +67,12 @@ proc main() =
   doAssert findExe("poweroff") == fixture / "poweroff"
   writeFile(tester, "#!/bin/sh\nprintf x >> " & quoteShell(marker) & "\nexit 7\n")
   setFilePermissions(tester, {fpUserRead, fpUserWrite, fpUserExec})
+  writeFile(game, "#!/bin/sh\ntest \"$#\" = 0 || exit 2\nprintf x >> " & quoteShell(gameMarker) & "\n")
+  setFilePermissions(game, {fpUserRead, fpUserWrite, fpUserExec})
   putEnv("DISPLAY", testDisplay)
   let
     process = startProcess(absolutePath("build/mono-retro"),
-      args = ["--device:generic", "--tester:" & tester, "--seconds:20"], options = {poParentStreams})
+      args = ["--device:generic", "--tester:" & tester, "--decompbound:" & game, "--seconds:20"], options = {poParentStreams})
     d = XOpenDisplay(testDisplay.cstring)
   doAssert d != nil
   defer:
@@ -79,6 +83,11 @@ proc main() =
   var window = findWindow(d, 0)
   for attempt in 1 .. 2:
     sleep(80)
+    press(d, window, 0xff0d)
+    window = findWindow(d, window)
+    doAssert readFile(gameMarker).len == attempt
+  press(d, window, 0xff54)
+  for attempt in 1 .. 2:
     press(d, window, 0xff0d)
     window = findWindow(d, window)
     doAssert readFile(marker).len == attempt

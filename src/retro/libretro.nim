@@ -82,6 +82,8 @@ type
     av*: AvInfo
     buttons*: uint16
     frames*, videoFrames*, audioFrames*: uint64
+    captureAudio: bool
+    audioSamples: seq[int16]
     savePath*: string
     apiVersion: proc(): cuint {.cdecl.}
     setEnvironment: proc(callback: EnvironmentCallback) {.cdecl.}
@@ -115,6 +117,12 @@ proc validate*(av: AvInfo) =
       av.geometry.aspectRatio < 0 or av.timing.fps.classify in {fcNan, fcInf, fcNegInf} or
       av.timing.fps <= 0 or av.timing.fps > 1000:
     raise newException(ValueError, "Invalid core video geometry or timing")
+
+proc audioFrequency*(rate: float): int =
+  ## Convert a positive core sample rate to an OpenAL-compatible frequency.
+  if rate.classify in {fcNan, fcInf, fcNegInf} or rate < 1 or rate > high(cint).float:
+    raise newException(ValueError, "Invalid core audio sample rate")
+  int(round(rate))
 
 proc environment(command: cuint, data: pointer): bool {.cdecl.} =
   ## Implement the small software-core feature set advertised by this host.
@@ -168,6 +176,10 @@ proc environment(command: cuint, data: pointer): bool {.cdecl.} =
       if data != nil:
         let av = cast[ptr AvInfo](data)[]
         av.validate()
+        if active.captureAudio:
+          discard audioFrequency(av.timing.sampleRate)
+          if av.timing.sampleRate != active.av.timing.sampleRate:
+            active.audioSamples.setLen(0)
         active.av = av
         return true
     of SetGeometry:
@@ -199,13 +211,35 @@ proc video(data: pointer, width, height: cuint, pitch: csize_t) {.cdecl.} =
     active.failure = error.msg
 
 proc audio(left, right: int16) {.cdecl.} =
-  ## Consume audio without opening a device or changing the core's timing.
+  ## Copy one stereo frame before returning to the core.
   inc active.audioFrames
+  if not active.captureAudio or active.failure.len > 0: return
+  try:
+    active.audioSamples.add(left)
+    active.audioSamples.add(right)
+  except CatchableError as error:
+    active.failure = error.msg
 
 proc audioBatch(data: ptr int16, frames: csize_t): csize_t {.cdecl.} =
-  ## Acknowledge every stereo frame without playing or retaining it.
+  ## Copy borrowed stereo samples and acknowledge the complete batch.
   active.audioFrames += uint64(frames)
-  frames
+  result = frames
+  if not active.captureAudio or active.failure.len > 0 or frames == 0: return
+  try:
+    if data == nil or frames > csize_t(high(int) div (2 * sizeof(int16))):
+      raise newException(ValueError, "Invalid core audio batch")
+    let
+      offset = active.audioSamples.len
+      count = int(frames) * 2
+    if count > high(int) - offset: raise newException(ValueError, "Core audio batch is too large")
+    active.audioSamples.setLen(offset + count)
+    copyMem(addr active.audioSamples[offset], data, count * sizeof(int16))
+  except CatchableError as error:
+    active.failure = error.msg
+
+proc takeAudio*(session: CoreSession): seq[int16] =
+  ## Transfer captured stereo samples to the frontend without retaining a copy.
+  result = move(session.audioSamples)
 
 proc poll() {.cdecl.} =
   ## Input is a stable snapshot for the duration of one emulated frame.
@@ -247,12 +281,13 @@ proc close*(session: CoreSession) =
     session.library = nil
     active = nil
 
-proc openCore*(corePath, romPath, saveDirectory: string): CoreSession =
+proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false): CoreSession =
   ## Load one explicitly selected software core and an independent save history.
   if active != nil: raise newException(ValueError, "Only one libretro core can be active")
   if not fileExists(corePath): raise newException(IOError, "Missing core: " & corePath)
   if not fileExists(romPath): raise newException(IOError, "Missing ROM: " & romPath)
-  result = CoreSession(romPath: absolutePath(romPath), saveDirectory: absolutePath(saveDirectory))
+  result = CoreSession(romPath: absolutePath(romPath), saveDirectory: absolutePath(saveDirectory),
+    captureAudio: captureAudio)
   let session = result
   session.systemDirectory = session.saveDirectory / "system"
   session.savePath = session.saveDirectory / romPath.splitFile.name & ".srm"
@@ -306,6 +341,7 @@ proc openCore*(corePath, romPath, saveDirectory: string): CoreSession =
     session.setController(0, JoypadDevice)
     session.getAv(addr session.av)
     session.av.validate()
+    if session.captureAudio: discard audioFrequency(session.av.timing.sampleRate)
     if fileExists(session.savePath):
       let
         contents = readFile(session.savePath)
@@ -324,6 +360,7 @@ proc openCore*(corePath, romPath, saveDirectory: string): CoreSession =
 proc step*(session: CoreSession, buttons: uint16) =
   ## Advance exactly one frame with the frontend's current input snapshot.
   session.buttons = buttons
+  session.audioSamples.setLen(0)
   session.run()
   inc session.frames
   session.check()

@@ -43,8 +43,8 @@ proc copyFrame*(previous: Image, data: pointer, width, height, pitch: int,
         b = uint8((blue shl 3) or (blue shr 2))
       result.data[y * width + x] = rgbx(r, g, b, 255)
 
-proc fitFrame*(source, previous: Image, width, height: int, aspect: float): Image =
-  ## Present nearest-neighbour pixels inside an aspect-preserving black border.
+proc fitFrame*(source, previous: Image, width, height: int): Image =
+  ## Center whole-number pixel scaling, clipping at native size if necessary.
   if width <= 0 or height <= 0:
     raise newException(ValueError, "Invalid presentation dimensions")
   result = previous
@@ -53,13 +53,22 @@ proc fitFrame*(source, previous: Image, width, height: int, aspect: float): Imag
   result.fill(rgbx(0, 0, 0, 255))
   if source == nil: return
   let
-    ratio = if aspect > 0: aspect else: source.width.float / source.height.float
-    viewWidth = max(1, min(width, int(height.float * ratio)))
-    viewHeight = max(1, min(height, int(viewWidth.float / ratio)))
+    sourcePixels = cast[ptr UncheckedArray[ColorRGBX]](unsafeAddr source.data[0])
+    targetPixels = cast[ptr UncheckedArray[ColorRGBX]](addr result.data[0])
+    scale = max(1, min(width div source.width, height div source.height))
+    viewWidth = source.width * scale
+    viewHeight = source.height * scale
     left = (width - viewWidth) div 2
     top = (height - viewHeight) div 2
-  for y in 0 ..< viewHeight:
-    let row = (y * source.height div viewHeight) * source.width
-    for x in 0 ..< viewWidth:
-      result.data[(y + top) * width + x + left] =
-        source.data[row + x * source.width div viewWidth]
+  for sourceY in 0 ..< source.height:
+    let targetY = top + sourceY * scale
+    if targetY < 0 or targetY >= height: continue
+    var targetX = left
+    for sourceX in 0 ..< source.width:
+      let pixel = sourcePixels[sourceY * source.width + sourceX]
+      for x in max(0, targetX) ..< min(width, targetX + scale):
+        targetPixels[targetY * width + x] = pixel
+      targetX += scale
+    for y in targetY + 1 ..< min(height, targetY + scale):
+      copyMem(addr targetPixels[y * width], addr targetPixels[targetY * width],
+        width * sizeof(ColorRGBX))

@@ -140,9 +140,10 @@ proc render*(ui: LauncherUi, state: MenuState, title: string, power: PowerStatus
   elif role == BottomScreen:
     ui.label(image, MenuLabels[state.selected], Margin, top, 30)
     let description = case state.selected
-      of 0: "Check the screens, controls, touch and sound.\n\nHold Select + Start in the tester to return here."
-      of 1: "Show the kernel, operating system, battery gauges\nand local network addresses."
-      of 2: "Restart the device. You will be asked to confirm."
+      of 0: "Play EarthBound with decompbound.\n\nL2 swaps screens. Hold Select + Start to return."
+      of 1: "Check the screens, controls, touch and sound.\n\nHold Select + Start in the tester to return here."
+      of 2: "Show the kernel, operating system, battery gauges\nand local network addresses."
+      of 3: "Restart the device. You will be asked to confirm."
       else: "Power off the device. You will be asked to confirm."
     ui.label(image, description, Margin, top + 70, 24, MutedColor)
   if role != TopScreen and not confirming:

@@ -22,6 +22,7 @@ proc main() =
     doAssert $session.info.libraryName == "Player fixture"
     doAssert session.av.geometry.baseWidth == 3 and session.av.timing.fps == 60
     session.step(256)
+    doAssert session.takeAudio().len == 0
     doAssert session.image.data[0] == rgbx(255, 0, 0, 255)
     doAssert session.image.data[3] == rgbx(255, 255, 255, 255)
     session.step(0)
@@ -78,5 +79,37 @@ proc main() =
   last.step(0)
   doAssert last.shutdown
   last.close()
+
+  writeFile(rom, "R")
+  let audible = openCore(core, rom, directory / "audio", captureAudio = true)
+  try:
+    audible.step(0)
+    doAssert audible.takeAudio() == @[10'i16, -10, 100, -100, 200, -200]
+    doAssert audible.takeAudio().len == 0
+    audible.step(0)
+    doAssert audible.av.timing.sampleRate == 44100
+    doAssert audible.takeAudio() == @[10'i16, -10, 100, -100, 200, -200]
+    audible.step(0)
+    audible.step(0)
+    doAssert audible.takeAudio().len == 6
+  finally:
+    audible.close()
+  for mode in ["I", "U"]:
+    writeFile(rom, mode)
+    let previousTraceSize = readFile(trace).len
+    var broken: CoreSession
+    rejected = false
+    try:
+      broken = openCore(core, rom, directory / mode, captureAudio = true)
+      broken.step(0)
+    except ValueError, IOError:
+      rejected = true
+    finally:
+      if broken != nil: broken.close()
+    doAssert rejected
+    if mode == "U":
+      doAssert readFile(trace)[previousTraceSize .. ^1].contains("audio_returned=1\n")
+  doAssert readFile(trace).endsWith("unload=1\ndeinit=1\n")
+  doAssert readFile(trace).contains("audio_returned=1\n")
 
 main()

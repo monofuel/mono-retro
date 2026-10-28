@@ -1,15 +1,18 @@
 # mono-retro-player
 
-A silent desktop libretro player using Nim, Windy, Pixie and Paddy. The first
-target is Mother 3 with mGBA on X11. It runs independently of the launcher;
-handheld display backends, audio playback, save states and menus are future work.
+A desktop libretro player using Nim, Windy, Pixie, Paddy and Slappy. The first
+targets are Mother 3 with mGBA on X11 and decompbound on the RG DS Plus. The player
+can run independently or as a child of the launcher. Save states and ROM browsing
+are future work.
 
 ## Build and run
 
 Use Nim 2 and Nimby with the project's existing dependencies. The current
 Windy and Paddy `anbernic-handhelds` branches supply the APIs used here; no
 player-specific library changes are required. Native Linux dependencies are
-libudev, libevdev, libX11 and libXcursor, plus a C compiler for the ABI bridge.
+libudev, libevdev, libX11, libXcursor and OpenAL Soft, plus a C compiler for the
+ABI bridge. Install Slappy ≥0.4.0 and its dependencies through Nimby in the
+existing parent workspace, preserving the Windy/Paddy branches.
 
 On NixOS, the scoped development shell supplies native build/runtime libraries:
 
@@ -58,16 +61,69 @@ analog stick conversion is outside this MVP. Keyboard and controller buttons
 combine. Unplugging the controller removes its held buttons. Device-specific
 mapping remains an application concern.
 
-Emulation pauses while the window is unfocused or minimized. On resume the
+Desktop emulation pauses while the window is unfocused or minimized. On resume the
 clock starts from the current time. Frames follow the core's reported rate
 (mGBA reports about 59.73 Hz), without burst catch-up. The software renderer
 copies pitch-aware RGB565, XRGB8888 or 0RGB1555 frames, repeats duplicate frames,
-and scales with nearest-neighbour sampling inside black borders. Hardware
-rendering requests are unsupported. The window starts at 720×480 and resizes.
+and scales by the largest whole-number factor that fits (1×, 2×, 3×, …), centered
+inside black borders. Pixels stay square; the core's display-aspect hint does not
+stretch the image. The window starts at the core's native base resolution (for
+example, 240×160 for GBA). Below native size, the image remains at 1× and is
+center-cropped. Hardware rendering requests are unsupported.
 
-Audio emulation remains enabled, but both audio callbacks discard samples;
-no audio device or audio library is opened. `--frames:N` exits after N emulated
-frames for bounded tests. Window close, SIGINT and SIGTERM also save and exit.
+`--frames:N` exits after N emulated frames for bounded tests. Window close,
+SIGINT and SIGTERM also save and exit.
+
+## RG DS Plus
+
+`make player-rg-ds-plus` cross-builds `build/mono-retro-player-rg-ds-plus` using
+the existing ARM64 compiler configuration and target libraries in
+`build/arm64-libs/`. It includes the DRM backend and needs target libudev,
+libevdev, libdrm and ALSA-enabled OpenAL Soft. No X11 libraries are required.
+The cross-link directory must also contain OpenAL's target C++ runtime and its
+matching libc/libm dependencies; the linker uses it for transitive dependencies
+without embedding device-library paths into the executable.
+
+Device detection reuses the tester's profiles; `--device:rg-ds-plus` and
+`--display:drm` are available as overrides. Anbernic controls use the existing
+app-owned Paddy mappings. The game starts on DSI-2 (bottom), with DSI-1 black.
+L2 moves it between screens without restarting the core. Only the active screen
+is redrawn; scaling stays at integer factors. Hold Select+Start for two seconds
+to save and exit to the launcher.
+
+The Decompbound menu entry invokes `/usr/local/bin/mono-retro-decompbound`, which
+selects the core in `/usr/local/lib/libretro/`, ROM
+`/var/lib/mono-retro/roms/EarthBound.smc`, separate device saves under
+`/var/lib/mono-retro/saves/decompbound/`, and the app-specific OpenAL configuration
+`/etc/mono-retro/alsoft.conf`. Monorig's secret-free handheld launcher tool manages
+the wrapper and configuration. The launcher releases displays and input before
+running the child and recreates them after it exits. Only one display application
+may own the device at a time.
+
+## Audio
+
+Sound is enabled by default. Both libretro callbacks copy signed 16-bit stereo
+PCM before returning to the core. After each emulated frame, the player passes
+the combined samples to Slappy's `StreamingSource` at the core's reported sample
+rate. All Slappy calls stay on the application's main thread, outside C callbacks.
+OpenAL performs the playback and any output-rate conversion internally.
+
+Playback primes with at least 30 ms of samples. Completed buffers are reclaimed
+while polling events, and queued PCM is capped at 100 ms. If it exceeds that
+limit, stale buffers are discarded and playback primes again. This queue bound
+excludes buffering inside OpenAL and the operating system; it is not an
+input-to-sound latency guarantee. The existing FPS clock still controls emulation;
+there is no audio-driven clock or adaptive clock-drift correction in this MVP.
+
+Focus loss or minimization flushes queued audio; resuming primes with fresh
+samples. A changed core sample rate recreates the stream. Closing releases the
+source and buffers before destroying the OpenAL context.
+
+Slappy selects its first available OpenAL output. Backend/device selection is
+handled through OpenAL Soft's normal configuration; volume uses system controls.
+Audio initialization and playback errors stop the player through its normal
+save/cleanup path. Add `--mute` to deliberately discard audio without opening a
+device. OpenAL Soft remains a linked runtime dependency in muted mode.
 
 ## Saves
 
@@ -100,9 +156,12 @@ kill "$xvfbPid"
 
 Use an unused isolated display; the integration test refuses to run without
 `MONO_RETRO_TEST_DISPLAY`. It checks displayed pixels, letterboxing on resize,
-keyboard events, focus pause, save files and clean Escape/SIGTERM exits.
+keyboard events, focus pause, save files and clean Escape/SIGTERM exits. Automated
+audio playback uses OpenAL Soft's null backend, so tests do not play sounds on
+the desktop. The X11 test also checks initialization failure cleanup and muted
+playback with an unusable audio backend.
 The C fixture also tests full-path versus in-memory ROM loading, option defaults,
-duplicate frames, callback error containment, both discarded-audio callbacks,
+duplicate frames, callback error containment, both captured-audio callbacks,
 save reload/size checks and cleanup after rejected cores or ROMs.
 
 With separately obtained mGBA and Mother 3 working copies:
@@ -115,8 +174,10 @@ MONO_RETRO_TEST_DISPLAY=:97 build/integration-player-x11 \
   build/cores/mgba_libretro.so 'build/player-test/Mother 3 (English v1.3).gba'
 ```
 
-The core smoke test runs 1,800 frames, checks 240×160 game graphics and discarded
+The core smoke test runs 1,800 frames, checks 240×160 game graphics and captured
 audio, then verifies save reload using temporary saves. It writes an ignored
 capture to `build/player-test/mgba-smoke.png`. The optional X11 smoke test checks
 180 paced frames. Neither is a substitute for manually playing, testing a real
-controller and saving/loading in Mother 3's own menu.
+controller and saving/loading in Mother 3's own menu. For audio acceptance, listen
+for correct music speed/pitch and clean effects, then unfocus/refocus the window
+and check that old audio does not resume.

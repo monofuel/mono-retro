@@ -64,6 +64,9 @@ void retro_get_system_info(struct retro_system_info *info)
 void retro_get_system_av_info(struct retro_system_av_info *info)
 {
     *info = (struct retro_system_av_info){{3, 2, 3, 2, 1.5f}, {60, 48000}};
+    /* Integer presentation must retain native pixels even with a different aspect hint. */
+    if (mode == 'T') info->geometry.aspect_ratio = 2.0f;
+    if (mode == 'I') info->timing.sample_rate = 0;
 }
 bool retro_load_game(const struct retro_game_info *game)
 {
@@ -95,7 +98,8 @@ void retro_run(void)
     /* Deliberate row padding detects incorrect packed-row assumptions. */
     const uint32_t pixels[] = {0xff0000, 0x00ff00, 0x0000ff, 0xdeadbeef,
                               0xffffff, 0x808080, 0x000000, 0xdeadbeef};
-    const int16_t samples[] = {100, -100, 200, -200};
+    int16_t samples[1600] = {100, -100, 200, -200};
+    const size_t audio_frames = mode == 'T' ? 799 : 2;
     poll_input();
     unsigned mask = (uint16_t)input(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
     if (input(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A) != !!(mask & 256)) abort();
@@ -106,10 +110,18 @@ void retro_run(void)
     memory[1] = mask >> 8;
     memory[4] = 123;
     frames++;
+    if (mode == 'R' && frames == 2) {
+        struct retro_system_av_info info;
+        retro_get_system_av_info(&info);
+        info.timing.sample_rate = 44100;
+        if (!environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info)) abort();
+    }
     video(mode == 'H' ? RETRO_HW_FRAME_BUFFER_VALID : (mode == 'D' && frames > 1 ? NULL : pixels), 3, 2, sizeof(uint32_t) * 4);
     trace("video_returned", frames);
     audio(10, -10);
-    if (batch(samples, 2) != 2) abort();
+    if (batch(mode == 'U' ? NULL : samples, audio_frames) != audio_frames) abort();
+    memset(samples, 0, sizeof(samples));
+    trace("audio_returned", 1);
     if (mode == 'Q') environment(RETRO_ENVIRONMENT_SHUTDOWN, NULL);
 }
 #endif

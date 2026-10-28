@@ -9,3 +9,4 @@ if getEnv("MONO_RETRO_TARGET") == "arm64":
   switch("gcc.linkerexe", getEnv("MONO_RETRO_CC", "aarch64-unknown-linux-gnu-gcc"))
   switch("passL", "-Wl,--dynamic-linker=/lib/ld-linux-aarch64.so.1")
   switch("passL", "-L" & (thisDir() / "build/arm64-libs"))
+  switch("passL", "-Wl,-rpath-link," & (thisDir() / "build/arm64-libs"))

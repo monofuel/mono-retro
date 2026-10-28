@@ -18,4 +18,4 @@ proc reset*(clock: var FrameClock, now: int64) =
 proc advance*(clock: var FrameClock, now: int64) =
   ## Preserve steady deadlines and avoid burst catch-up after a slow frame.
   clock.deadline += clock.period
-  if clock.deadline < now: clock.deadline = now + clock.period
+  if clock.deadline < now: clock.deadline = now

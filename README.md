@@ -5,12 +5,12 @@ display and multitouch, Paddy for gamepads, raw evdev for diagnostics, and ALSA
 for sound. See [Windy builds and backend selection](README-windy.md). Images and machine configuration belong in
 monobake and monorig.
 
-`mono-retro-player` is the silent desktop libretro MVP for testing Mother 3 with
+`mono-retro-player` is the desktop libretro MVP for testing Mother 3 with
 mGBA. See [building, controls and save handling](README-player.md).
 
 ## Launcher
 
-`mono-retro` has Hardware Test, System Info, Reboot and Shut Down entries. It uses Windy,
+`mono-retro` has Hardware Test, System Info, Reboot, Shut Down and Decompbound entries. It uses Windy,
 Pixie and Paddy, sharing the tester's device profiles and app-owned mappings.
 The primary screen has a battery percentage/status toolbar. On DS Plus the
 menu stays above while details, touch actions and System Info appear below.
@@ -31,6 +31,10 @@ Hardware Test releases the launcher's displays and input handles before
 starting the sibling `mono-retro-hwtest` process. Hold Select+Start in the
 tester to return to the menu. `--tester:PATH` selects another executable.
 There is no battery overlay over the separate diagnostic application.
+
+Decompbound uses the same child-process handoff through the sibling
+`mono-retro-decompbound` wrapper (`--decompbound:PATH` overrides it). Hold
+Select+Start in the player to save and return. See [the player instructions](README-player.md#rg-ds-plus).
 
 Build both applications with `make launcher-desktop`, or cross-build with
 `make launcher-handhelds`. The latter creates `build/mono-retro-arm64` and

@@ -11,8 +11,8 @@ const
   StickThreshold = 0.6'f32
   StickRelease = 0.3'f32
   WheelNotch = 10'f32
-  Help = """Usage: mono-retro [--tester:PATH] [--seconds:N] [device/display options]
-Hardware Test, System Info, Reboot and Shut Down.
+  Help = """Usage: mono-retro [--tester:PATH] [--decompbound:PATH] [--seconds:N] [device/display options]
+Hardware Test, System Info, Reboot, Shut Down and Decompbound.
 Use arrows/D-pad/stick, A/Enter to open, and B/Back/Escape to return.
 The tester's Select+Start exit returns to the launcher.
 Device/display/profile options match mono-retro-hwtest.
@@ -29,10 +29,12 @@ proc main() =
   var
     arguments: seq[string]
     tester = getAppDir() / "mono-retro-hwtest"
+    decompbound = getAppDir() / "mono-retro-decompbound"
     duration = 0
     parser = initOptParser(commandLineParams())
   for kind, key, value in parser.getopt():
     if kind == cmdLongOption and key == "tester": tester = absolutePath(value)
+    elif kind == cmdLongOption and key == "decompbound": decompbound = absolutePath(value)
     elif kind == cmdLongOption and key == "seconds":
       duration = parseInt(value)
       if duration < 1: raise newException(ValueError, "Duration must be positive")
@@ -201,9 +203,12 @@ proc main() =
         state.busy = true
         pendingPower = action
       dirty = true
-    if action == LaunchTester:
-      if not fileExists(tester):
-        state.error = "Tester not found: " & tester
+    if action in {LaunchTester, LaunchDecompbound}:
+      let
+        child = if action == LaunchTester: tester else: decompbound
+        childArguments = if action == LaunchTester: @["test", "--seconds:3600"] & arguments else: @[]
+      if not fileExists(child):
+        state.error = "Application not found: " & child
       else:
         screen.close()
         screen = nil
@@ -211,9 +216,9 @@ proc main() =
         for device in backInputs: device.close()
         backInputs.setLen(0)
         try:
-          let code = runTester(tester, @["test", "--seconds:3600"] & arguments,
+          let code = runTester(child, childArguments,
             proc(): bool = stopping)
-          state.error = if code == 0: "" else: "Hardware tester exited with code " & $code
+          state.error = if code == 0: "" else: "Application exited with code " & $code
         except OSError, IOError:
           state.error = getCurrentExceptionMsg()
           stderr.writeLine(state.error)

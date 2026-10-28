@@ -7,9 +7,12 @@ block:
   var state = MenuState(armed: false)
   doAssert state.handle(Open, false) == NoAction
   state.armed = true
-  doAssert state.handle(Open, false) == LaunchTester
+  doAssert MenuLabels[0] == "Decompbound"
+  doAssert state.handle(Open, false) == LaunchDecompbound
   discard state.handle(Next, false)
   doAssert state.selected == 1
+  doAssert state.handle(Open, false) == LaunchTester
+  discard state.handle(Next, false)
   doAssert state.handle(Open, false) == NoAction and state.info
   discard state.handle(Next, false)
   doAssert state.scroll == ScrollStep
@@ -17,9 +20,11 @@ block:
   doAssert not state.info and state.scroll == 0
   doAssert state.handle(Back, false) == NoAction
   doAssert state.handle(Back, true) == QuitLauncher
+  state.selected = 0
+  doAssert state.handle(Open, false) == LaunchDecompbound
 
 block:
-  for (index, action) in [(2, RebootSystem), (3, ShutdownSystem)]:
+  for (index, action) in [(3, RebootSystem), (4, ShutdownSystem)]:
     var state = MenuState(selected: index, armed: true)
     doAssert state.handle(Open, false) == NoAction
     doAssert state.confirmation == action and not state.confirmYes

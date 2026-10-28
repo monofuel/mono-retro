@@ -28,7 +28,7 @@ proc close*(display: Display) =
   if errors.len > 0:
     raise newException(IOError, errors.join("; "))
 
-proc openDisplay*(settings: Settings): Display =
+proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480)): Display =
   result = Display(backend: settings.displayBackend())
   let display = result
   let backend = case result.backend
@@ -51,7 +51,7 @@ proc openDisplay*(settings: Settings): Display =
         if paths.len != 1:
           raise newException(IOError, "Expected exactly one touchscreen: " & settings.touchName)
         options.touchDevice = paths[0]
-      let window = newWindow(settings.title, ivec2(720, 480), vsync = false,
+      let window = newWindow(settings.title, initialSize, vsync = false,
         linuxOptions = options)
       display.windows.add window
       let size = window.framebufferSize
