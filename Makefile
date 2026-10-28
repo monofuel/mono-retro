@@ -57,10 +57,13 @@ launcher-handhelds: handhelds
 test-launcher-x11: launcher-desktop
 	nim r tests/integration_launcher_x11.nim
 
-.PHONY: player-desktop player-rg-ds-plus player-fixtures test-player test-player-x11
+.PHONY: player-desktop player-rg-sp player-rg-ds-plus player-fixtures test-player test-player-x11
 player-desktop:
 	mkdir -p build
 	MONO_RETRO_BACKENDS=x11 nim c -o:build/mono-retro-player src/player.nim
+player-rg-sp:
+	mkdir -p build
+	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=fbdev nim c -o:build/mono-retro-player-rg-sp src/player.nim
 player-rg-ds-plus:
 	mkdir -p build
 	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=drm nim c -o:build/mono-retro-player-rg-ds-plus src/player.nim

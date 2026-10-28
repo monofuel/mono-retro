@@ -1,7 +1,7 @@
 # mono-retro-player
 
 A desktop libretro player using Nim, Windy, Pixie, Paddy and Slappy. The first
-targets are Mother 3 with mGBA on X11 and decompbound on the RG DS Plus. The player
+targets are Mother 3 with mGBA on X11 and decompbound on the RG SP and RG DS Plus. The player
 can run independently or as a child of the launcher. Save states and ROM browsing
 are future work.
 
@@ -74,7 +74,17 @@ center-cropped. Hardware rendering requests are unsupported.
 `--frames:N` exits after N emulated frames for bounded tests. Window close,
 SIGINT and SIGTERM also save and exit.
 
-## RG DS Plus
+## Handhelds
+
+`make player-rg-sp` builds `build/mono-retro-player-rg-sp` with the fbdev backend
+for the RG SP's vendor kernel. It uses the same ARM64 cross-link directory as
+the DS Plus, without libdrm. Runtime libraries must match the target's CPU and
+Gentoo ABI; install OpenAL with ALSA enabled for the RG SP's Cortex-A53.
+The RG SP uses `/dev/fb0` and the existing app-owned controller mapping, with
+the named `mono_retro_test` ALSA PCM. It has one screen, so L2 stays a core input.
+Hold Select+Start for two seconds to save and return to the launcher.
+
+### RG DS Plus
 
 `make player-rg-ds-plus` cross-builds `build/mono-retro-player-rg-ds-plus` using
 the existing ARM64 compiler configuration and target libraries in
@@ -91,7 +101,9 @@ L2 moves it between screens without restarting the core. Only the active screen
 is redrawn; scaling stays at integer factors. Hold Select+Start for two seconds
 to save and exit to the launcher.
 
-The Decompbound menu entry invokes `/usr/local/bin/mono-retro-decompbound`, which
+### Launcher integration
+
+On both devices the Decompbound menu entry invokes `/usr/local/bin/mono-retro-decompbound`, which
 selects the core in `/usr/local/lib/libretro/`, ROM
 `/var/lib/mono-retro/roms/EarthBound.smc`, separate device saves under
 `/var/lib/mono-retro/saves/decompbound/`, and the app-specific OpenAL configuration
