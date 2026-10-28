@@ -13,8 +13,9 @@ const
 Libretro player with Slappy audio. --mute opens no audio device.
 Arrows: D-pad. X/Z: A/B. A/S: L/R. Enter: Start. Backspace: Select.
 Escape or window close exits. The first connected gamepad uses RetroPad positions.
-DS: --ds-layout:combined|separate. W/Q: X/Y. Left mouse: touch lower screen.
-Hold Select+Start for two seconds to exit. L2 swaps dual screens.
+DS: --ds-layout:combined|separate. W/Q: X/Y. Mouse or native touch: lower screen.
+Native DS requires two DRM outputs and separate layout.
+Hold Select+Start for two seconds to exit. L2 swaps screens for single-screen games.
 Device detection selects the display; --device and --display override it.
 Desktop emulation pauses when the window is unfocused or minimized.
 """
@@ -26,7 +27,7 @@ proc stopHandler(signal: cint) {.noconv.} =
   stopping = true
 
 proc main() =
-  ## Run one desktop core with an independent save directory.
+  ## Run one core with an independent save directory.
   var
     corePath, romPath, saveDirectory: string
     limit = 0'u64
@@ -52,8 +53,7 @@ proc main() =
     raise newException(ValueError, Help)
   var settings = parseSettings(displayArguments, detectDevice())
   let desktop = settings.displayBackend() == "x11"
-  if dsLayout != NoDsLayout and not desktop:
-    raise newException(ValueError, "DS layouts currently require X11")
+  validateDsDisplay(dsLayout, settings.displayBackend(), settings.outputs.len)
   let session = openCore(corePath, romPath, saveDirectory, captureAudio = not muted,
     options = (if dsLayout == NoDsLayout: @[] else: DsOptions))
   defer: session.close()
@@ -62,7 +62,7 @@ proc main() =
   settings.title = "mono-retro-player | " & $session.info.libraryName & " | " &
     romPath.extractFilename & (if muted: " | MUTED" else: "")
   let
-    windowTitles = case dsLayout
+    windowTitles = case (if desktop: dsLayout else: NoDsLayout)
       of NoDsLayout: newSeq[string]()
       of CombinedDs: @[settings.title]
       of SeparateDs: @[settings.title & " | Top", settings.title & " | Touch"]
@@ -71,6 +71,7 @@ proc main() =
     screen = openDisplay(settings,
       initialSize, windowTitles)
   defer: screen.close()
+  validateDsDisplay(dsLayout, settings.displayBackend(), screen.count())
   var
     activeScreen = screen.count() - 1
     black: seq[Image]
@@ -98,6 +99,7 @@ proc main() =
     paused = false
     exitHeld = false
     exitStarted: MonoTime
+    stylus: DsStylus
   while not stopping and not session.shutdown and (limit == 0 or session.frames < limit):
     if not screen.poll(): break
     if sound != nil: sound.pump()
@@ -112,15 +114,16 @@ proc main() =
       if (now - exitStarted).inSeconds >= ExitHoldSeconds: break
     else:
       exitHeld = false
-    if not desktop and screen.count() > 1 and pad.buttonPressed(GamepadL2):
+    if not desktop and dsLayout == NoDsLayout and screen.count() > 1 and pad.buttonPressed(GamepadL2):
       screen.window(activeScreen).presentPixels(black[activeScreen])
       activeScreen = (activeScreen + 1) mod screen.count()
     var focusedIndex = -1
-    for index in 0 ..< screen.count():
-      let window = screen.window(index)
-      if window.focused and not window.minimized and
-          window.framebufferSize.x > 0 and window.framebufferSize.y > 0:
-        focusedIndex = index
+    if desktop:
+      for index in 0 ..< screen.count():
+        let window = screen.window(index)
+        if window.focused and not window.minimized and
+            window.framebufferSize.x > 0 and window.framebufferSize.y > 0:
+          focusedIndex = index
     let
       inputScreen = if desktop and focusedIndex >= 0: focusedIndex else: activeScreen
       window = screen.window(inputScreen)
@@ -145,8 +148,11 @@ proc main() =
     for (key, button) in KeyboardButtons:
       if window.buttonDown[key]: held.incl key
     var buttons = keyboardButtons(held) or gamepadButtons(pads)
-    if not desktop and screen.count() > 1: buttons = buttons and not (1'u16 shl 12)
-    let pointerInput = if dsLayout != NoDsLayout:
+    if not desktop and dsLayout == NoDsLayout and screen.count() > 1:
+      buttons = buttons and not (1'u16 shl 12)
+    let pointerInput = if dsLayout == SeparateDs and not desktop:
+        nativeDsPointer(stylus, screen.touch.contacts, screen.width(1), screen.height(1))
+      elif dsLayout != NoDsLayout:
         dsPointer(dsLayout, inputScreen, size.x.int, size.y.int,
           window.mousePos.x.int, window.mousePos.y.int, window.buttonDown[MouseLeft])
       else: PointerInput()
@@ -159,7 +165,7 @@ proc main() =
         let
           output = screen.window(index)
           outputSize = output.framebufferSize
-        if output.minimized or outputSize.x <= 0 or outputSize.y <= 0: continue
+        if (desktop and output.minimized) or outputSize.x <= 0 or outputSize.y <= 0: continue
         dsImages[index] = dsScreen(session.image, dsImages[index], index)
         canvases[index] = fitFrame(dsImages[index], canvases[index], outputSize.x.int, outputSize.y.int)
         output.presentPixels(canvases[index])

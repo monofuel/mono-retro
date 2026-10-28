@@ -5,8 +5,9 @@ display and multitouch, Paddy for gamepads, raw evdev for diagnostics, and ALSA
 for sound. See [Windy builds and backend selection](README-windy.md). Images and machine configuration belong in
 monobake and monorig.
 
-`mono-retro-player` is the desktop libretro MVP for testing Mother 3 with
-mGBA. See [building, controls and save handling](README-player.md).
+`mono-retro-player` runs libretro cores on X11 and the handhelds, including
+melonDS DS with native dual-screen touch on the RG DS Plus.
+See [building, controls and save handling](README-player.md).
 
 ## Launcher
 
@@ -14,6 +15,7 @@ mGBA. See [building, controls and save handling](README-player.md).
 Pixie and Paddy, sharing the tester's device profiles and app-owned mappings.
 The primary screen has a battery percentage/status toolbar. On DS Plus the
 menu stays above while details, touch actions and System Info appear below.
+Lost in Blue appears after Decompbound when its launch wrapper is installed.
 
 Use D-pad/stick or keyboard arrows to select, physical A/Enter to open, and
 B/Back/Escape to return. The information page scrolls with D-pad/stick, mouse

@@ -8,7 +8,7 @@ type
   UiRect* = object
     x*, y*, width*, height*: int
   MenuLayout* = object
-    rows*: array[MenuLabels.len, UiRect]
+    rows*: seq[UiRect]
     body*, action*, cancel*, confirm*: UiRect
   LauncherUi* = ref object
     font: Font
@@ -40,7 +40,7 @@ proc contains*(area: UiRect, point: Vec2): bool =
     point.x < (area.x + area.width).float32 and
     point.y < (area.y + area.height).float32
 
-proc layout*(width, height: int, role: ScreenRole): MenuLayout =
+proc layout*(width, height: int, role: ScreenRole, rows = MenuLabels.len): MenuLayout =
   ## Keep controls inside the drawable area on all three supported displays.
   let top = if role == BottomScreen: Margin else: ToolbarHeight + Margin
   result.action = UiRect(x: Margin, y: height - ButtonHeight - 32,
@@ -48,8 +48,9 @@ proc layout*(width, height: int, role: ScreenRole): MenuLayout =
   let
     firstRow = top + 42
     rowHeight = max(32, min(RowHeight,
-      (result.action.y - firstRow - ErrorSpace - RowGap * (MenuLabels.len - 1)) div MenuLabels.len))
-  for index in 0 .. MenuLabels.high:
+      (result.action.y - firstRow - ErrorSpace - RowGap * (rows - 1)) div rows))
+  result.rows.setLen(rows)
+  for index in 0 ..< rows:
     result.rows[index] = UiRect(x: Margin, y: firstRow + index * (rowHeight + RowGap),
       width: max(1, width - Margin * 2), height: rowHeight)
   result.cancel = result.action
@@ -93,7 +94,8 @@ proc render*(ui: LauncherUi, state: MenuState, title: string, power: PowerStatus
   result.image.fill(BackgroundColor)
   let
     image = result.image
-    areas = layout(width, height, role)
+    labels = state.labels()
+    areas = layout(width, height, role, labels.len)
     showInfo = state.info and role != TopScreen
     confirming = state.confirmation != NoAction
     showMenu = role != BottomScreen and not showInfo and (not confirming or role == TopScreen)
@@ -101,7 +103,7 @@ proc render*(ui: LauncherUi, state: MenuState, title: string, power: PowerStatus
   if role != BottomScreen: ui.toolbar(image, title, power)
   if showMenu:
     ui.label(image, "mono-retro", Margin, top, 28)
-    for index, text in MenuLabels:
+    for index, text in labels:
       let area = areas.rows[index]
       image.rect(area.x, area.y, area.width, area.height,
         if state.selected == index: SelectedColor else: PanelColor)
@@ -144,8 +146,9 @@ proc render*(ui: LauncherUi, state: MenuState, title: string, power: PowerStatus
     result.maxScroll = max(0, offset - content.height)
     image.draw(content, translate(vec2(areas.body.x.float32, areas.body.y.float32)))
   elif role == BottomScreen:
-    ui.label(image, MenuLabels[state.selected], Margin, top, 30)
-    let description = case state.selected
+    ui.label(image, labels[state.selected], Margin, top, 30)
+    let description = case state.entryIndex()
+      of -1: "Play Lost in Blue with melonDS DS.\n\nTouch the lower screen. Hold Select + Start to return."
       of 0: "Play EarthBound with decompbound.\n\nL2 swaps screens. Hold Select + Start to return."
       of 1: "Check the screens, controls, touch and sound.\n\nHold Select + Start in the tester to return here."
       of 2: "Show the kernel, operating system, battery gauges\nand local network addresses."
@@ -155,7 +158,7 @@ proc render*(ui: LauncherUi, state: MenuState, title: string, power: PowerStatus
   if role != TopScreen and not confirming:
     let area = areas.action
     image.rect(area.x, area.y, area.width, area.height, SelectedColor)
-    ui.label(image, if showInfo: "Back" else: "Open " & MenuLabels[state.selected],
+    ui.label(image, if showInfo: "Back" else: "Open " & labels[state.selected],
       area.x + 20, area.y + 15, 22)
   if state.error.len > 0:
     ui.label(image, state.error, Margin, height - 112, 18, ErrorColor)

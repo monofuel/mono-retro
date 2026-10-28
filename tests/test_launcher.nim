@@ -24,6 +24,27 @@ block:
   doAssert state.handle(Open, false) == LaunchDecompbound
 
 block:
+  var state = MenuState(armed: true, lostInBlue: true)
+  doAssert state.labels() == @["Decompbound", "Lost in Blue", "Hardware Test",
+    "System Info", "Reboot", "Shut Down"]
+  doAssert state.handle(Open, false) == LaunchDecompbound
+  discard state.handle(Next, false)
+  doAssert state.handle(Open, false) == LaunchLostInBlue
+  discard state.handle(Next, false)
+  doAssert state.handle(Open, false) == LaunchTester
+  discard state.handle(Next, false)
+  doAssert state.handle(Open, false) == NoAction and state.info
+  discard state.handle(Back, false)
+  discard state.handle(Next, false)
+  discard state.handle(Open, false)
+  doAssert state.confirmation == RebootSystem
+  discard state.handle(Back, false)
+  discard state.handle(Next, false)
+  state.armed = true
+  discard state.handle(Open, false)
+  doAssert state.confirmation == ShutdownSystem
+
+block:
   for (index, action) in [(3, RebootSystem), (4, ShutdownSystem)]:
     var state = MenuState(selected: index, armed: true)
     doAssert state.handle(Open, false) == NoAction
@@ -178,6 +199,12 @@ block:
         draining = ui.render(MenuState(), "Test", power, @[], width, height, role)
         iconX = max(width div 2, width - 315) + 3
       doAssert draining.image[iconX, 28] == rgbx(255, 205, 125, 255)
+    let
+      dsMenu = MenuState(lostInBlue: true, selected: 1)
+      dsAreas = layout(width, height, role, dsMenu.labels().len)
+    doAssert dsAreas.rows.len == 6
+    doAssert dsAreas.rows[^1].y + dsAreas.rows[^1].height < dsAreas.action.y
+    doAssert ui.render(dsMenu, "Test", PowerStatus(), @[], width, height, role).image.height == height
   var lines: seq[string]
   for index in 0 ..< 100: lines.add "Long information page " & $index
   doAssert ui.render(MenuState(info: true), "Test", PowerStatus(), lines,

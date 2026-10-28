@@ -1,7 +1,8 @@
 # mono-retro-player
 
-A desktop libretro player using Nim, Windy, Pixie, Paddy and Slappy. The first
-targets are Mother 3 with mGBA on X11 and decompbound on the RG SP and RG DS Plus. The player
+A libretro player using Nim, Windy, Pixie, Paddy and Slappy. Targets include
+Mother 3 with mGBA on X11, decompbound on both handhelds and melonDS DS on X11
+and the RG DS Plus. The player
 can run independently or as a child of the launcher. Save states and ROM browsing
 are future work.
 
@@ -112,15 +113,18 @@ ROMs, saves and core binaries are not tracked in Git.
 
 The generic player also accepts `--ds-layout:combined|separate`. This opt-in
 preset selects software rendering, native top/bottom order with no gap, one fixed
-core layout and pointer input. It requires 256×384 video and X11. Core option
+core layout and pointer input. Software rendering is the pinned core's default;
+software-only builds do not expose a renderer-choice option. It requires
+256×384 video. Both layouts work on
+X11; native DRM requires separate layout and exactly two outputs. Core option
 overrides use the existing legacy libretro options API; unsupported requested
 options fail explicitly. Our Windy fork includes the X11 event-predicate ABI fix
 needed to route focus and mouse input independently between the two windows.
 
 The tested cartridge boots with the core's built-in FreeBIOS and firmware.
 Audio output uses Slappy as usual. Microphone input is disabled for this MVP;
-Lost in Blue interactions requiring blowing remain unavailable. Handheld DS
-presentation and switching layouts during play are deferred.
+Lost in Blue interactions requiring blowing remain unavailable. Switching
+layouts during play is deferred.
 
 ## Handhelds
 
@@ -149,6 +153,44 @@ L2 moves it between screens without restarting the core. Only the active screen
 is redrawn; scaling stays at integer factors. Hold Select+Start for two seconds
 to save and exit to the launcher.
 
+#### Lost in Blue
+
+`--ds-layout:separate` presents the DS top screen on DSI-1 and touch screen on
+DSI-2. Each 256×192 image fills its 1024×768 panel at exactly 4× integer scaling.
+Windy's native touch contacts supply the stylus; the first finger stays selected
+until release or cancellation. L2 does not swap physical screens in DS mode.
+
+Build the software-rendering ARM64 core with the same cross compiler used for
+the player:
+
+```sh
+export MONO_RETRO_CC=/path/to/aarch64-unknown-linux-gnu-gcc
+make core-melondsds-rg-ds-plus
+make player-rg-ds-plus
+```
+
+The core target needs CMake, Make, Git and the matching cross G++ compiler. It
+checks out melonDS DS 1.2.0 at `33c48260402865ef77667487528efd5ca7ce1233` under
+ignored `build/sources/`. Upstream's CMake fetches its pinned melonDS,
+libretro-common, embed-binaries, GLM, zlib, libslirp, pntr, fmt, yamc, span-lite
+and date sources. The build enables ARM64 JIT and threaded software rendering,
+disables OpenGL and release LTO, and targets Cortex-A55. `CORE_JOBS` defaults
+to 8. No Nix runtime paths are embedded. Build outputs include
+`build/cores/melondsds-arm64/src/libretro/melondsds_libretro.so` and the
+upstream-generated combined attribution file `melondsds-LICENSE.txt` and
+`SOURCES.txt` recording resolved dependency commits. Full dependency commits
+are pinned in `tools/melondsds-revisions.cmake`.
+The source checkouts must remain available for license/source provenance;
+ROMs, saves, source downloads and compiled cores stay outside Git.
+
+The handheld wrapper uses an independent
+`/var/lib/mono-retro/saves/melonds-lost-in-blue/` directory and a copied
+`LOST_IN_BLUE_ASKEA4_00.nds` under `/var/lib/mono-retro/roms/`. Its initial
+`.srm` is a real copy of the archived original 8 KB `.sav`, separate from the
+PC working save and stock Anbernic saves/states. Installation never reseeds an
+existing test save. Built-in FreeBIOS/firmware avoids needing a user BIOS dump.
+Full-speed emulation is not an acceptance requirement for this initial port.
+
 ### Launcher integration
 
 On both devices the Decompbound menu entry invokes `/usr/local/bin/mono-retro-decompbound`, which
@@ -159,6 +201,12 @@ selects the core in `/usr/local/lib/libretro/`, ROM
 the wrapper and configuration. The launcher releases displays and input before
 running the child and recreates them after it exits. Only one display application
 may own the device at a time.
+
+When `/usr/local/bin/mono-retro-lost-in-blue` exists, Lost in Blue appears after
+Decompbound. Monorig installs this wrapper only on the RG DS Plus; it selects
+`/usr/local/lib/libretro/melondsds_libretro.so`, the independent save directory,
+`--ds-layout:separate` and the existing OpenAL configuration. The launcher's
+`--lost-in-blue:PATH` override also supports isolated integration tests.
 
 ## Audio
 

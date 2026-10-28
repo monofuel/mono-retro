@@ -113,4 +113,25 @@ proc main() =
   process.terminate()
   doAssert process.waitForExit(5000) == 0
 
+  let
+    dsGame = fixture / "lost-in-blue"
+    dsMarker = fixture / "ds-games"
+  writeFile(dsGame, "#!/bin/sh\nprintf x >> " & quoteShell(dsMarker) & "\n")
+  setFilePermissions(dsGame, {fpUserRead, fpUserWrite, fpUserExec})
+  let dsProcess = startProcess(absolutePath("build/mono-retro"),
+    args = ["--device:generic", "--lost-in-blue:" & dsGame, "--seconds:20"],
+    options = {poParentStreams})
+  defer:
+    if dsProcess.running(): dsProcess.terminate()
+    discard dsProcess.waitForExit(5000)
+    dsProcess.close()
+  window = findWindow(d, 0)
+  press(d, window, 0xff54)
+  for attempt in 1 .. 2:
+    press(d, window, 0xff0d)
+    window = findWindow(d, window)
+    doAssert readFile(dsMarker).len == attempt
+  press(d, window, 0xff1b)
+  doAssert dsProcess.waitForExit(5000) == 0
+
 main()

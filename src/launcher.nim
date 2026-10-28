@@ -11,8 +11,8 @@ const
   StickThreshold = 0.6'f32
   StickRelease = 0.3'f32
   WheelNotch = 10'f32
-  Help = """Usage: mono-retro [--tester:PATH] [--decompbound:PATH] [--seconds:N] [device/display options]
-Hardware Test, System Info, Reboot, Shut Down and Decompbound.
+  Help = """Usage: mono-retro [--tester:PATH] [--decompbound:PATH] [--lost-in-blue:PATH] [--seconds:N] [device/display options]
+Hardware Test, System Info, Reboot, Shut Down, Decompbound and installed Lost in Blue.
 Use arrows/D-pad/stick, A/Enter to open, and B/Back/Escape to return.
 The tester's Select+Start exit returns to the launcher.
 Device/display/profile options match mono-retro-hwtest.
@@ -30,11 +30,13 @@ proc main() =
     arguments: seq[string]
     tester = getAppDir() / "mono-retro-hwtest"
     decompbound = getAppDir() / "mono-retro-decompbound"
+    lostInBlue = getAppDir() / "mono-retro-lost-in-blue"
     duration = 0
     parser = initOptParser(commandLineParams())
   for kind, key, value in parser.getopt():
     if kind == cmdLongOption and key == "tester": tester = absolutePath(value)
     elif kind == cmdLongOption and key == "decompbound": decompbound = absolutePath(value)
+    elif kind == cmdLongOption and key == "lost-in-blue": lostInBlue = absolutePath(value)
     elif kind == cmdLongOption and key == "seconds":
       duration = parseInt(value)
       if duration < 1: raise newException(ValueError, "Duration must be positive")
@@ -54,7 +56,7 @@ proc main() =
   var
     screen: Display
     backInputs: seq[InputDevice]
-    state: MenuState
+    state = MenuState(lostInBlue: fileExists(lostInBlue))
     power = readPower(settings.batterySupply, currentSupply = settings.batteryCurrentSupply)
     network = localNetwork()
     lastBattery = getMonoTime()
@@ -86,7 +88,7 @@ proc main() =
       role = if screen.count() > 1:
           (if index == 0: TopScreen else: BottomScreen)
         else: SingleScreen
-      areas = layout(screen.width(index), screen.height(index), role)
+      areas = layout(screen.width(index), screen.height(index), role, state.labels().len)
     case phase
     of TouchBegin:
       if pointerId != -1: return
@@ -203,9 +205,12 @@ proc main() =
         state.busy = true
         pendingPower = action
       dirty = true
-    if action in {LaunchTester, LaunchDecompbound}:
+    if action in {LaunchTester, LaunchDecompbound, LaunchLostInBlue}:
       let
-        child = if action == LaunchTester: tester else: decompbound
+        child = case action
+          of LaunchTester: tester
+          of LaunchLostInBlue: lostInBlue
+          else: decompbound
         childArguments = if action == LaunchTester: @["test", "--seconds:3600"] & arguments else: @[]
       if not fileExists(child):
         state.error = "Application not found: " & child

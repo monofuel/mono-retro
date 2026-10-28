@@ -1,17 +1,20 @@
 import
   pixie,
-  ./[libretro, playervideo]
+  ./[libretro, playervideo, touch]
 
 type
   DsLayout* = enum
     NoDsLayout, CombinedDs, SeparateDs
+  DsStylus* = object
+    active: bool
+    contactId: int32
 
 const
   DsWidth* = 256
   DsHeight* = 192
   PointerMaximum = 32767
+  # Software is the pinned core's default; software-only builds omit its renderer option.
   DsOptions* = @[
-    ("melonds_render_mode", "software"),
     ("melonds_screen_layout1", "top-bottom"),
     ("melonds_screen_gap", "0"),
     ("melonds_number_of_screen_layouts", "1"),
@@ -20,11 +23,17 @@ const
   ]
 
 proc parseDsLayout*(value: string): DsLayout =
-  ## Select an explicit desktop DS presentation mode.
+  ## Select an explicit DS presentation mode.
   case value
   of "combined": CombinedDs
   of "separate": SeparateDs
   else: raise newException(ValueError, "DS layout must be combined or separate")
+
+proc validateDsDisplay*(layout: DsLayout, backend: string, outputs: int) =
+  ## Require two DRM outputs for native DS presentation.
+  if layout == NoDsLayout or backend == "x11": return
+  if backend != "drm" or layout != SeparateDs or outputs != 2:
+    raise newException(ValueError, "Native DS mode requires separate layout and two DRM outputs")
 
 proc validateDsFrame*(width, height: int) =
   ## Require the native zero-gap layout configured by the DS preset.
@@ -61,3 +70,18 @@ proc dsPointer*(layout: DsLayout, index, width, height, x, y: int,
   result.x = int16(((sourceX * 2 + 1) * PointerMaximum div DsWidth) - PointerMaximum)
   result.y = int16(((sourceY * 2 + 1) * PointerMaximum div (DsHeight * 2)) - PointerMaximum)
   result.pressed = pressed
+
+proc nativeDsPointer*(stylus: var DsStylus, contacts: seq[TouchContact],
+    width, height: int): PointerInput =
+  ## Keep one finger as the stylus until its contact ends or is cancelled.
+  if not stylus.active:
+    for contact in contacts:
+      if contact.active:
+        stylus.contactId = contact.id
+        stylus.active = true
+        break
+  if stylus.active:
+    for contact in contacts:
+      if contact.active and contact.id == stylus.contactId:
+        return dsPointer(SeparateDs, 1, width, height, contact.x.int, contact.y.int, true)
+  stylus.active = false

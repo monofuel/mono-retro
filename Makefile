@@ -87,6 +87,30 @@ DS_LAYOUT ?= combined
 LOST_IN_BLUE_SOURCE ?= $(HOME)/Documents/Arcade/cartridge-dumps/DS/Lost in Blue
 LOST_IN_BLUE_WORK = build/player-test/melonds-lost-in-blue
 MELONDS_CORE = build/cores/melondsds-package/lib/retroarch/cores/melondsds_libretro.so
+MELONDSDS_REV = 33c48260402865ef77667487528efd5ca7ce1233
+MELONDSDS_SOURCE = build/sources/melondsds-1.2.0
+MELONDSDS_ARM64 = build/cores/melondsds-arm64
+CORE_JOBS ?= 8
+
+.PHONY: core-melondsds-rg-ds-plus
+core-melondsds-rg-ds-plus:
+	mkdir -p build/sources
+	test -d $(MELONDSDS_SOURCE)/.git || git clone --no-checkout https://github.com/JesseTG/melonds-ds.git $(MELONDSDS_SOURCE)
+	git -C $(MELONDSDS_SOURCE) checkout --detach $(MELONDSDS_REV)
+	git -C $(MELONDSDS_SOURCE) diff --exit-code HEAD --
+	NIX_DONT_SET_RPATH=1 NIX_DONT_SET_RPATH_aarch64_unknown_linux_gnu=1 cmake \
+	  -C $(CURDIR)/tools/melondsds-revisions.cmake \
+	  -S $(MELONDSDS_SOURCE) -B $(MELONDSDS_ARM64) \
+	  -DCMAKE_TOOLCHAIN_FILE=$(CURDIR)/tools/melondsds-arm64.cmake \
+	  -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+	  -DFETCHCONTENT_UPDATES_DISCONNECTED=ON \
+	  -DENABLE_OPENGL=OFF -DENABLE_JIT=ON -DENABLE_THREADED_RENDERER=ON \
+	  -DENABLE_LTO_RELEASE=OFF -DBUILD_TESTING=OFF
+	NIX_DONT_SET_RPATH=1 NIX_DONT_SET_RPATH_aarch64_unknown_linux_gnu=1 cmake \
+	  --build $(MELONDSDS_ARM64) --target melondsds_libretro --parallel $(CORE_JOBS)
+	@set -e; for source in $(MELONDSDS_SOURCE) $(MELONDSDS_ARM64)/_deps/*-src; do \
+	  printf '%s ' "$$(basename "$$source")"; git -C "$$source" rev-parse HEAD; \
+	done > $(MELONDSDS_ARM64)/SOURCES.txt
 
 .PHONY: core-melondsds prepare-lost-in-blue-tool setup-lost-in-blue play-lost-in-blue
 core-melondsds:
