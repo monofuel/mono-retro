@@ -100,6 +100,12 @@ stretch the image. The window starts at the core's native base resolution (for
 example, 240×160 for GBA). Below native size, the image remains at 1× and is
 center-cropped. Hardware rendering requests are unsupported.
 
+DRM playback requests synchronized presentation from Windy's `anbernic-handhelds`
+backend. Each screen uses two buffers and switches at vblank, avoiding writes
+into the currently visible buffer. Uploads wait for the previous switch before
+reusing its storage; the frame clock still sets the emulation rate. This requires
+the fork's DRM page-flip support. X11 and fbdev retain their existing presentation.
+
 `--frames:N` exits after N emulated frames for bounded tests. Window close,
 SIGINT and SIGTERM also save and exit.
 

@@ -96,7 +96,7 @@ proc main() =
           int32(dual.panelHeight * dual.desktopScale))
       else: ivec2(session.av.geometry.baseWidth.int32, session.av.geometry.baseHeight.int32)
     screen = openDisplay(settings,
-      initialSize, windowTitles)
+      initialSize, windowTitles, vsync = settings.displayBackend() == "drm")
   defer: screen.close()
   validateDsDisplay(dual.layout, settings.displayBackend(), screen.count())
   var
