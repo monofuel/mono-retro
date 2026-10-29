@@ -28,13 +28,17 @@ proc main() =
     doAssert getMonoTime() < deadline
     sleep(10)
     audio.pump()
+  doAssert audio.underruns == 1
   audio.submit(small, 48000)
   doAssert audio.bufferedFrames() == 480
   audio.reset()
+  audio.pump()
+  doAssert audio.underruns == 1
   doAssert audio.bufferedFrames() == 0
   for index in 0 ..< 40:
     audio.submit(large, 48000)
     doAssert audio.bufferedFrames() <= 48000 * MaxBufferedMs div 1000
+  doAssert audio.overruns > 0
   audio.reset()
   audio.submit(small, 48000)
   audio.submit(newSeq[int16](441 * 2), 44100)

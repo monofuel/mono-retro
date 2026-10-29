@@ -5,6 +5,8 @@ type
   FrameClock* = object
     period*, deadline*: int64
 
+const MaxCatchUpFrames = 2
+
 proc newFrameClock*(fps: float, now: int64): FrameClock =
   ## Use the core's nominal rate instead of assuming sixty frames per second.
   if fps.classify in {fcNan, fcInf, fcNegInf} or fps <= 0 or fps > 1000:
@@ -16,6 +18,7 @@ proc reset*(clock: var FrameClock, now: int64) =
   clock.deadline = now
 
 proc advance*(clock: var FrameClock, now: int64) =
-  ## Preserve steady deadlines and avoid burst catch-up after a slow frame.
+  ## Recover short frame delays while bounding catch-up after a sustained stall.
   clock.deadline += clock.period
-  if clock.deadline < now: clock.deadline = now
+  if now - clock.deadline > clock.period * MaxCatchUpFrames:
+    clock.deadline = now

@@ -11,6 +11,7 @@ const
   ExitHoldSeconds = 2
   Help = """Usage: mono-retro-player --core:PATH --rom:PATH --save-dir:DIR [--frames:N] [--mute] [--load-state:PATH]
 Libretro player with Slappy audio. --mute opens no audio device.
+--no-input requires --frames and feeds neutral controls for repeatable benchmarks.
 --load-state:PATH is a startup-only CLI import of a core-defined format.
 Desktop: drop a state file onto a window.
 Arrows: D-pad. X/Z: A/B. A/S: L/R. PageUp/PageDown: L2/R2. Enter: Start. Backspace: Select.
@@ -35,6 +36,7 @@ proc main() =
     corePath, romPath, saveDirectory, statePath: string
     limit = 0'u64
     muted = false
+    noInput = false
     dsLayout = NoDsLayout
     earthboundDs = false
     displayArguments = @["--device:auto"]
@@ -50,6 +52,7 @@ proc main() =
       if value.len == 0: raise newException(IOError, "Missing state path")
       statePath = value
     of "mute": muted = true
+    of "no-input": noInput = true
     of "ds-layout":
       if earthboundDs:
         raise newException(ValueError, "--earthbound-ds cannot be combined with --ds-layout")
@@ -65,6 +68,8 @@ proc main() =
     else: raise newException(ValueError, "Unknown player option: " & key)
   if corePath.len == 0 or romPath.len == 0 or saveDirectory.len == 0:
     raise newException(ValueError, Help)
+  if noInput and limit == 0:
+    raise newException(ValueError, "--no-input requires --frames")
   let dual = selectDualScreen(dsLayout, earthboundDs)
   var settings = parseSettings(displayArguments, detectDevice())
   let desktop = settings.displayBackend() == "x11"
@@ -213,7 +218,9 @@ proc main() =
       let held = if desktop: inputScreen == 1 and window.buttonDown[MouseLeft]
         else: stylus.active
       pointerInput = companionGesture.companionPointer(pointerInput, held)
-    measured(CoreWork): session.step(buttons, pointerInput)
+    measured(CoreWork):
+      session.step(if noInput: 0'u16 else: buttons,
+        if noInput: PointerInput() else: pointerInput)
     if sound != nil:
       measured(AudioOutput): sound.submit(session.takeAudio(), session.av.timing.sampleRate)
     if dual.layout != NoDsLayout and session.image != nil:
@@ -253,6 +260,8 @@ proc main() =
     clock.advance(getMonoTime().ticks)
   echo "Frames: ", session.frames, "; video: ", session.videoFrames,
     "; audio frames: ", session.audioFrames
+  if sound != nil:
+    echo "Audio underruns: ", sound.underruns, "; overruns: ", sound.overruns
   printTimings(session.frames)
   when defined(playerTimings):
     echo "Loop milliseconds: ", (getMonoTime() - loopStarted).inMilliseconds

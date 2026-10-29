@@ -120,6 +120,21 @@ block:
   doAssert clock.deadline == late + clock.period
   clock.reset(500)
   doAssert clock.deadline == 500
+
+block:
+  var clock = newFrameClock(60, 0)
+  let period = clock.period
+  clock.advance(period + period div 2)
+  doAssert clock.deadline == period
+  clock.advance(period * 2)
+  doAssert clock.deadline == period * 2
+  clock.advance(period * 7)
+  doAssert clock.deadline == period * 7
+  clock.reset(0)
+  clock.advance(period * 3)
+  doAssert clock.deadline == period
+  clock.advance(period * 4 + 1)
+  doAssert clock.deadline == period * 4 + 1
   for fps in [0.0, -1.0, Inf, NaN]:
     var rejected = false
     try: discard newFrameClock(fps, 0)

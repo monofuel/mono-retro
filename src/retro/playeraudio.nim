@@ -7,6 +7,8 @@ type
     stream: StreamingSource
     frequency: int
     initialized: bool
+    started: bool
+    underruns*, overruns*: int
     pending: seq[uint8]
     chunks: seq[int]
 
@@ -54,6 +56,9 @@ proc newPlayerAudio*(sampleRate: float): PlayerAudio =
 proc pump*(audio: PlayerAudio) =
   ## Reclaim finished buffers and their corresponding duration records.
   audio.stream.pump()
+  if audio.started and not audio.stream.playing():
+    inc audio.underruns
+    audio.started = false
   checkAudio()
   let processed = audio.chunks.len - audio.stream.queuedLen()
   if processed > 0:
@@ -70,6 +75,7 @@ proc reset*(audio: PlayerAudio) =
   checkAudio()
   audio.pending.setLen(0)
   audio.chunks.setLen(0)
+  audio.started = false
 
 proc submit*(audio: PlayerAudio, samples: seq[int16], sampleRate: float) =
   ## Queue one frame's PCM, bounding latency and priming after underruns.
@@ -90,7 +96,9 @@ proc submit*(audio: PlayerAudio, samples: seq[int16], sampleRate: float) =
     maximum = max(1, frequency * MaxBufferedMs div MillisecondsPerSecond)
     frames = min(samples.len div Channels, maximum)
     first = samples.len - frames * Channels
-  if audio.bufferedFrames() + frames > maximum: audio.reset()
+  if audio.bufferedFrames() + frames > maximum:
+    inc audio.overruns
+    audio.reset()
   var bytes = newSeq[uint8](frames * FrameBytes)
   copyMem(addr bytes[0], unsafeAddr samples[first], bytes.len)
   if audio.chunks.len == 0:
@@ -100,5 +108,6 @@ proc submit*(audio: PlayerAudio, samples: seq[int16], sampleRate: float) =
       return
     bytes = move(audio.pending)
   audio.stream.queueData(bytes)
+  audio.started = true
   audio.chunks.add(bytes.len div FrameBytes)
   checkAudio()

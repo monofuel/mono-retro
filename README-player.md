@@ -268,8 +268,11 @@ Playback primes with at least 30 ms of samples. Completed buffers are reclaimed
 while polling events, and queued PCM is capped at 100 ms. If it exceeds that
 limit, stale buffers are discarded and playback primes again. This queue bound
 excludes buffering inside OpenAL and the operating system; it is not an
-input-to-sound latency guarantee. The existing FPS clock still controls emulation;
-there is no audio-driven clock or adaptive clock-drift correction in this MVP.
+input-to-sound latency guarantee. The FPS clock controls emulation, retaining up
+to two frames of timing debt so short delays can catch up; longer stalls reset
+the deadline. There is no audio-driven clock or adaptive rate correction.
+Exit logs report audio underruns (the source ran dry) and overruns (queued audio
+exceeded the cap), excluding intentional pause/reset operations.
 
 Focus loss or minimization flushes queued audio; resuming primes with fresh
 samples. A changed core sample rate recreates the stream. Closing releases the
@@ -314,6 +317,9 @@ Core rendering and audio generation remain enabled. The default discards their
 output; `--copy-video` includes the frontend's normal video conversion but still
 opens no display or audio device. Initialization is excluded from the reported
 mean frame time. Always use a disposable save directory: SRAM is saved on exit.
+For finite full-player runs, add `--no-input` to feed neutral controls to the
+core while keeping exit shortcuts active. The headless benchmark always feeds
+neutral controls. This prevents physical input from changing the test workload.
 
 `make player-timings-rg-ds-plus` builds the full player with optional stage timers.
 It accepts the normal player arguments and reports exclusive milliseconds per
