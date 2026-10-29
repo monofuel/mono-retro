@@ -77,6 +77,32 @@ center-cropped. Hardware rendering requests are unsupported.
 `--frames:N` exits after N emulated frames for bounded tests. Window close,
 SIGINT and SIGTERM also save and exit.
 
+## EarthBound DS companion
+
+With decompbound's dual-screen core, add `--earthbound-ds` to the normal player
+command. This preset enables `decompbound_dual_screen=enabled` and requires a
+256×448 software frame: two stacked 256×224 panels. It cannot be combined with
+`--ds-layout`, which retains its melonDS-specific options and geometry.
+
+On X11, **Game** and **Party** windows start at 512×448 (2×) and resize
+independently. On the RG DS Plus, use the ordinary `player-rg-ds-plus` build
+with `--device:rg-ds-plus --earthbound-ds`; Game goes to DSI-1 and Party/touch
+to DSI-2. Both panels use the existing integer scaling and centering. On
+1024×768 displays the panels are 768×672 (3×) with black borders. EarthBound DS
+targets 2× and above; original DS-size 1× layouts are outside its MVP.
+
+The core draws party HP/PP and browsable inventory. Tap/click a card or use
+**L2/R2** (**Page Up/Page Down** on keyboard) to choose a character. These
+triggers reach the core instead of swapping physical displays. Gameplay
+controls keep working; item use and battle commands remain in the game menus.
+Only lower-panel touches inside the scaled image reach the companion. The
+existing first-contact touch policy, focus pause, audio, SRAM persistence and
+either-window exit behavior apply.
+
+Use a separate `--save-dir` for testing. The existing launcher entry and
+installed handheld wrappers are unchanged. Decompbound's
+`docs/earthbound-ds.md` documents its build/run targets and physical checks.
+
 ## Lost in Blue with melonDS DS on X11
 
 From this repository, choose a mode when launching:

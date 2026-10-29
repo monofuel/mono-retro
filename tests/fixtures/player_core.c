@@ -42,6 +42,7 @@ void retro_init(void)
     trace("init", 1);
     struct retro_variable variables[] = {
         {"fixture_option", "Example; first|second"},
+        {"decompbound_dual_screen", "Companion; disabled|enabled"},
         {"melonds_render_mode", "Renderer; software|opengl"},
         {"melonds_screen_layout1", "Layout; top-bottom|bottom-top"},
         {"melonds_screen_gap", "Gap; 0|1"},
@@ -79,6 +80,7 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
 {
     *info = (struct retro_system_av_info){{3, 2, 3, 2, 1.5f}, {60, 48000}};
     if (mode == 'N') info->geometry = (struct retro_game_geometry){256, 384, 256, 384, 2.0f / 3.0f};
+    if (mode == 'E') info->geometry = (struct retro_game_geometry){256, 448, 256, 448, 4.0f / 7.0f};
     /* Integer presentation must retain native pixels even with a different aspect hint. */
     if (mode == 'T') info->geometry.aspect_ratio = 2.0f;
     if (mode == 'I') info->timing.sample_rate = 0;
@@ -96,6 +98,11 @@ bool retro_load_game(const struct retro_game_info *game)
     mode = *(const char *)game->data;
 #endif
     if (mode == 'F') return false;
+    if (mode == 'E') {
+        struct retro_variable variable = {"decompbound_dual_screen", NULL};
+        if (!environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) ||
+            !variable.value || strcmp(variable.value, "enabled")) abort();
+    }
     enum retro_pixel_format format = mode == 'B' ? 99 : RETRO_PIXEL_FORMAT_XRGB8888;
     environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
     trace("load", 1);
@@ -114,7 +121,7 @@ void retro_run(void)
     const uint32_t pixels[] = {0xff0000, 0x00ff00, 0x0000ff, 0xdeadbeef,
                               0xffffff, 0x808080, 0x000000, 0xdeadbeef};
     int16_t samples[1600] = {100, -100, 200, -200};
-    const size_t audio_frames = mode == 'T' || mode == 'N' ? 799 : 2;
+    const size_t audio_frames = mode == 'T' || mode == 'N' || mode == 'E' ? 799 : 2;
     poll_input();
     unsigned mask = (uint16_t)input(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
     if (input(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A) != !!(mask & 256)) abort();
@@ -136,13 +143,14 @@ void retro_run(void)
         info.timing.sample_rate = 44100;
         if (!environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info)) abort();
     }
-    if (mode == 'N') {
-        static uint32_t ds_pixels[384][257];
-        for (unsigned y = 0; y < 384; y++)
+    if (mode == 'N' || mode == 'E') {
+        static uint32_t ds_pixels[448][257];
+        const unsigned panel_height = mode == 'E' ? 224 : 192;
+        for (unsigned y = 0; y < panel_height * 2; y++)
             for (unsigned x = 0; x < 256; x++)
-                ds_pixels[y][x] = y < 192 ? (x < 128 ? 0xff0000 : 0x00ff00) :
+                ds_pixels[y][x] = y < panel_height ? (x < 128 ? 0xff0000 : 0x00ff00) :
                     (x < 128 ? 0x0000ff : 0xffffff);
-        video(ds_pixels, 256, 384, sizeof(ds_pixels[0]));
+        video(ds_pixels, 256, panel_height * 2, sizeof(ds_pixels[0]));
     } else {
         video(mode == 'H' ? RETRO_HW_FRAME_BUFFER_VALID : (mode == 'D' && frames > 1 ? NULL : pixels), 3, 2, sizeof(uint32_t) * 4);
     }

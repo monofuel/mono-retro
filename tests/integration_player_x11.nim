@@ -100,25 +100,29 @@ proc closeWindow(d: Display, window: Window) =
 proc testDs(d: Display, directory: string) =
   ## Verify DS screen routing, mouse coordinates, focus and either-window exit.
   let rom = directory / "ds.test"
-  writeFile(rom, "N")
   putEnv("ALSOFT_DRIVERS", "null")
-  for mode in 0 .. 2:
+  for mode in 0 .. 4:
     let
+      earthbound = mode >= 3
       separate = mode != 0
+      panelHeight = if earthbound: 224 else: 192
       trace = directory / ("ds-trace-" & $mode)
       layout = if separate: "separate" else: "combined"
+    writeFile(rom, if earthbound: "E" else: "N")
     putEnv("MONO_RETRO_FIXTURE_TRACE", trace)
     let process = startProcess(absolutePath("build/mono-retro-player"), args = [
       "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
-      "--save-dir:" & directory / ("ds-save-" & $mode), "--ds-layout:" & layout],
+      "--save-dir:" & directory / ("ds-save-" & $mode),
+      (if earthbound: "--earthbound-ds" else: "--ds-layout:" & layout)],
       options = {poParentStreams})
     defer:
       if process.running(): process.terminate()
       discard process.waitForExit(5000)
       process.close()
     let
-      top = findWindow(d, if separate: " | Top" else: "")
-      touch = if separate: findWindow(d, " | Touch") else: top
+      top = findWindow(d, if earthbound: " | Game" elif separate: " | Top" else: "")
+      touch = if earthbound: findWindow(d, " | Party")
+        elif separate: findWindow(d, " | Touch") else: top
     d.XMoveWindow(top, 0, 0)
     if separate: d.XMoveWindow(touch, 400, 0)
     d.XSetInputFocus(touch, rtRoot)
@@ -126,17 +130,19 @@ proc testDs(d: Display, directory: string) =
     waitFrames(trace, 3)
     var attributes: XWindowAttributes
     d.XGetWindowAttributes(touch, addr attributes)
-    doAssert attributes.size == ivec2(256, if separate: 192 else: 384)
+    doAssert attributes.size == (if earthbound: ivec2(512, 448)
+      else: ivec2(256, if separate: 192 else: 384))
     let captured = getImage(d, top, 0, 0, 256, 192, high(culong), 2)
     doAssert captured != nil
     doAssert (getPixel(captured, 32, 32) and 0xffffff) == 0xff0000
     discard destroyImage(captured)
-    d.XResizeWindow(touch, 522, if separate: 394 else: 778)
+    d.XResizeWindow(touch, 522, if separate: panelHeight.cuint * 2 + 10 else: 778)
     d.XSync(false)
     waitFrames(trace, frameCount(trace) + 3)
     let
       touchY = if separate: 133'i32 else: 517'i32
-      pixels = getImage(d, touch, 0, 0, 522, if separate: 394 else: 778, high(culong), 2)
+      pixels = getImage(d, touch, 0, 0, 522,
+        (if separate: panelHeight.cuint * 2 + 10 else: 778), high(culong), 2)
     doAssert pixels != nil
     doAssert (getPixel(pixels, 0, 0) and 0xffffff) == 0
     doAssert (getPixel(pixels, 133, touchY) and 0xffffff) == 0x0000ff
@@ -149,7 +155,7 @@ proc testDs(d: Display, directory: string) =
       pointerX = cast[int16](lastValue(trace, "pointer_x").uint16).int
       pointerY = cast[int16](lastValue(trace, "pointer_y").uint16).int
     doAssert (pointerX + 32767) * 256 div 65534 == 64
-    doAssert (pointerY + 32767) * 384 div 65534 == 256
+    doAssert (pointerY + 32767) * (panelHeight * 2) div 65534 == panelHeight + 64
     mouse(d, touch, 173, touchY)
     waitFrames(trace, frameCount(trace) + 3)
     doAssert lastValue(trace, "pointer_pressed") == 1
@@ -159,10 +165,14 @@ proc testDs(d: Display, directory: string) =
     doAssert lastValue(trace, "pointer_pressed") == 0
     mouse(d, touch, 133, touchY)
     waitFrames(trace, frameCount(trace) + 3)
-    doAssert lastValue(trace, "pointer_pressed") == 1
+    doAssert lastValue(trace, "pointer_pressed") == (if earthbound: 0 else: 1)
     mouse(d, touch, 133, touchY, 0)
     waitFrames(trace, frameCount(trace) + 3)
     doAssert lastValue(trace, "pointer_pressed") == 0
+    mouse(d, touch, 133, touchY, 1)
+    waitFrames(trace, frameCount(trace) + 3)
+    doAssert lastValue(trace, "pointer_pressed") == 1
+    mouse(d, touch, 133, touchY, 0)
     if separate:
       d.XSetInputFocus(top, rtRoot)
       d.XFlush()
@@ -175,7 +185,14 @@ proc testDs(d: Display, directory: string) =
       key(d, top, 0x77, false)
       mouse(d, top, 64, 64, 0)
       d.XGetWindowAttributes(top, addr attributes)
-      doAssert attributes.size == ivec2(256, 192)
+      doAssert attributes.size == (if earthbound: ivec2(512, 448) else: ivec2(256, 192))
+      if earthbound:
+        for (symbol, bit) in [(0xff55.culong, 12), (0xff56.culong, 13)]:
+          key(d, top, symbol, true)
+          waitFrames(trace, frameCount(trace) + 3)
+          doAssert lastValue(trace, "input") == (1 shl bit)
+          key(d, top, symbol, false)
+          waitFrames(trace, frameCount(trace) + 3)
     d.XSetInputFocus(d.defaultRootWindow, rtRoot)
     d.XFlush()
     sleep(100)
@@ -186,7 +203,7 @@ proc testDs(d: Display, directory: string) =
     d.XFlush()
     waitFrames(trace, paused + 3)
     doAssert lastValue(trace, "pointer_pressed") == 0
-    closeWindow(d, if mode == 2: touch else: top)
+    closeWindow(d, if mode in [2, 4]: touch else: top)
     doAssert process.waitForExit(5000) == 0
     doAssert readFile(trace).endsWith("unload=1\ndeinit=1\n")
   delEnv("MONO_RETRO_FIXTURE_TRACE")
@@ -302,22 +319,28 @@ proc main() =
     doAssert readFile(paramStr(3)) == seed
   if paramCount() == 2:
     putEnv("ALSOFT_DRIVERS", "null")
-    let process = startProcess(absolutePath("build/mono-retro-player"), args = [
-      "--core:" & absolutePath(paramStr(1)), "--rom:" & absolutePath(paramStr(2)),
-      "--save-dir:" & directory / "mgba", "--frames:180"], options = {poParentStreams})
-    defer:
-      if process.running(): process.terminate()
-      discard process.waitForExit(5000)
-      process.close()
-    let
-      window = findWindow(d)
-      started = getMonoTime()
-    d.XSetInputFocus(window, rtRoot)
-    d.XFlush()
-    doAssert process.waitForExit(10000) == 0
-    let elapsed = (getMonoTime() - started).inMilliseconds
-    doAssert elapsed > 2700 and elapsed < 5000, "Unexpected frame pacing: " & $elapsed & "ms"
-    let savePath = directory / "mgba" / (paramStr(2).splitFile.name & ".srm")
-    doAssert getFileSize(savePath) > 0
+    let earthbound = paramStr(1).extractFilename.startsWith("decompbound_libretro")
+    for dual in 0 .. (if earthbound: 1 else: 0):
+      let saves = directory / (if dual == 1: "earthbound-ds" else: "single")
+      var arguments = @[
+        "--core:" & absolutePath(paramStr(1)), "--rom:" & absolutePath(paramStr(2)),
+        "--save-dir:" & saves, "--frames:180"]
+      if dual == 1: arguments.add("--earthbound-ds")
+      let process = startProcess(absolutePath("build/mono-retro-player"), args = arguments,
+        options = {poParentStreams})
+      defer:
+        if process.running(): process.terminate()
+        discard process.waitForExit(5000)
+        process.close()
+      let
+        window = findWindow(d, if dual == 1: " | Party" else: "")
+        started = getMonoTime()
+      d.XSetInputFocus(window, rtRoot)
+      d.XFlush()
+      doAssert process.waitForExit(10000) == 0
+      let elapsed = (getMonoTime() - started).inMilliseconds
+      doAssert elapsed > 2700 and elapsed < 5000, "Unexpected frame pacing: " & $elapsed & "ms"
+      let savePath = saves / (paramStr(2).splitFile.name & ".srm")
+      doAssert getFileSize(savePath) > 0
 
 main()

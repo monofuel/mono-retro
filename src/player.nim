@@ -11,10 +11,11 @@ const
   ExitHoldSeconds = 2
   Help = """Usage: mono-retro-player --core:PATH --rom:PATH --save-dir:DIR [--frames:N] [--mute]
 Libretro player with Slappy audio. --mute opens no audio device.
-Arrows: D-pad. X/Z: A/B. A/S: L/R. Enter: Start. Backspace: Select.
+Arrows: D-pad. X/Z: A/B. A/S: L/R. PageUp/PageDown: L2/R2. Enter: Start. Backspace: Select.
 Escape or window close exits. The first connected gamepad uses RetroPad positions.
-DS: --ds-layout:combined|separate. W/Q: X/Y. Mouse or native touch: lower screen.
-Native DS requires two DRM outputs and separate layout.
+DS: --ds-layout:combined|separate. EarthBound: --earthbound-ds. W/Q: X/Y.
+Mouse or native touch: lower or Party screen. The two presets cannot be combined.
+Native DS and EarthBound DS require two DRM outputs and separate screens.
 Hold Select+Start for two seconds to exit. L2 swaps screens for single-screen games.
 Device detection selects the display; --device and --display override it.
 Desktop emulation pauses when the window is unfocused or minimized.
@@ -33,6 +34,7 @@ proc main() =
     limit = 0'u64
     muted = false
     dsLayout = NoDsLayout
+    earthboundDs = false
     displayArguments = @["--device:auto"]
     parser = initOptParser(commandLineParams())
   for kind, key, value in parser.getopt():
@@ -43,7 +45,14 @@ proc main() =
     of "rom": romPath = value
     of "save-dir": saveDirectory = value
     of "mute": muted = true
-    of "ds-layout": dsLayout = parseDsLayout(value)
+    of "ds-layout":
+      if earthboundDs:
+        raise newException(ValueError, "--earthbound-ds cannot be combined with --ds-layout")
+      dsLayout = parseDsLayout(value)
+    of "earthbound-ds":
+      if dsLayout != NoDsLayout:
+        raise newException(ValueError, "--earthbound-ds cannot be combined with --ds-layout")
+      earthboundDs = true
     of "device", "display": displayArguments.add("--" & key & ":" & value)
     of "frames":
       limit = parseBiggestUInt(value)
@@ -51,27 +60,32 @@ proc main() =
     else: raise newException(ValueError, "Unknown player option: " & key)
   if corePath.len == 0 or romPath.len == 0 or saveDirectory.len == 0:
     raise newException(ValueError, Help)
+  let dual = selectDualScreen(dsLayout, earthboundDs)
   var settings = parseSettings(displayArguments, detectDevice())
   let desktop = settings.displayBackend() == "x11"
-  validateDsDisplay(dsLayout, settings.displayBackend(), settings.outputs.len)
+  validateDsDisplay(dual.layout, settings.displayBackend(), settings.outputs.len)
   let session = openCore(corePath, romPath, saveDirectory, captureAudio = not muted,
-    options = (if dsLayout == NoDsLayout: @[] else: DsOptions))
+    options = dual.options)
   defer: session.close()
-  if dsLayout != NoDsLayout:
-    validateDsFrame(session.av.geometry.baseWidth.int, session.av.geometry.baseHeight.int)
+  if dual.layout != NoDsLayout:
+    validateDsFrame(session.av.geometry.baseWidth.int, session.av.geometry.baseHeight.int,
+      dual.panelWidth, dual.panelHeight)
   settings.title = "mono-retro-player | " & $session.info.libraryName & " | " &
     romPath.extractFilename & (if muted: " | MUTED" else: "")
   let
-    windowTitles = case (if desktop: dsLayout else: NoDsLayout)
+    windowTitles = case (if desktop: dual.layout else: NoDsLayout)
       of NoDsLayout: newSeq[string]()
       of CombinedDs: @[settings.title]
-      of SeparateDs: @[settings.title & " | Top", settings.title & " | Touch"]
-    initialSize = if dsLayout == SeparateDs: ivec2(DsWidth, DsHeight)
+      of SeparateDs: @[settings.title & " | " & dual.topTitle,
+        settings.title & " | " & dual.bottomTitle]
+    initialSize = if dual.layout == SeparateDs:
+        ivec2(int32(dual.panelWidth * dual.desktopScale),
+          int32(dual.panelHeight * dual.desktopScale))
       else: ivec2(session.av.geometry.baseWidth.int32, session.av.geometry.baseHeight.int32)
     screen = openDisplay(settings,
       initialSize, windowTitles)
   defer: screen.close()
-  validateDsDisplay(dsLayout, settings.displayBackend(), screen.count())
+  validateDsDisplay(dual.layout, settings.displayBackend(), screen.count())
   var
     activeScreen = screen.count() - 1
     black: seq[Image]
@@ -100,6 +114,7 @@ proc main() =
     exitHeld = false
     exitStarted: MonoTime
     stylus: DsStylus
+    companionGesture: CompanionGesture
   while not stopping and not session.shutdown and (limit == 0 or session.frames < limit):
     if not screen.poll(): break
     if sound != nil: sound.pump()
@@ -114,7 +129,7 @@ proc main() =
       if (now - exitStarted).inSeconds >= ExitHoldSeconds: break
     else:
       exitHeld = false
-    if not desktop and dsLayout == NoDsLayout and screen.count() > 1 and pad.buttonPressed(GamepadL2):
+    if not desktop and dual.layout == NoDsLayout and screen.count() > 1 and pad.buttonPressed(GamepadL2):
       screen.window(activeScreen).presentPixels(black[activeScreen])
       activeScreen = (activeScreen + 1) mod screen.count()
     var focusedIndex = -1
@@ -148,25 +163,32 @@ proc main() =
     for (key, button) in KeyboardButtons:
       if window.buttonDown[key]: held.incl key
     var buttons = keyboardButtons(held) or gamepadButtons(pads)
-    if not desktop and dsLayout == NoDsLayout and screen.count() > 1:
+    if not desktop and dual.layout == NoDsLayout and screen.count() > 1:
       buttons = buttons and not (1'u16 shl 12)
-    let pointerInput = if dsLayout == SeparateDs and not desktop:
-        nativeDsPointer(stylus, screen.touch.contacts, screen.width(1), screen.height(1))
-      elif dsLayout != NoDsLayout:
-        dsPointer(dsLayout, inputScreen, size.x.int, size.y.int,
-          window.mousePos.x.int, window.mousePos.y.int, window.buttonDown[MouseLeft])
+    var pointerInput = if dual.layout == SeparateDs and not desktop:
+        nativeDsPointer(stylus, screen.touch.contacts, screen.width(1), screen.height(1),
+          dual.panelWidth, dual.panelHeight)
+      elif dual.layout != NoDsLayout:
+        dsPointer(dual.layout, inputScreen, size.x.int, size.y.int,
+          window.mousePos.x.int, window.mousePos.y.int, window.buttonDown[MouseLeft],
+          dual.panelWidth, dual.panelHeight)
       else: PointerInput()
+    if earthboundDs:
+      let held = if desktop: inputScreen == 1 and window.buttonDown[MouseLeft]
+        else: stylus.active
+      pointerInput = companionGesture.companionPointer(pointerInput, held)
     session.step(buttons, pointerInput)
     if sound != nil: sound.submit(session.takeAudio(), session.av.timing.sampleRate)
-    if dsLayout != NoDsLayout and session.image != nil:
-      validateDsFrame(session.image.width, session.image.height)
-    if dsLayout == SeparateDs and session.image != nil:
+    if dual.layout != NoDsLayout and session.image != nil:
+      validateDsFrame(session.image.width, session.image.height, dual.panelWidth, dual.panelHeight)
+    if dual.layout == SeparateDs and session.image != nil:
       for index in 0 .. 1:
         let
           output = screen.window(index)
           outputSize = output.framebufferSize
         if (desktop and output.minimized) or outputSize.x <= 0 or outputSize.y <= 0: continue
-        dsImages[index] = dsScreen(session.image, dsImages[index], index)
+        dsImages[index] = dsScreen(session.image, dsImages[index], index,
+          dual.panelWidth, dual.panelHeight)
         canvases[index] = fitFrame(dsImages[index], canvases[index], outputSize.x.int, outputSize.y.int)
         output.presentPixels(canvases[index])
     else:

@@ -1,9 +1,67 @@
 import
   pixie,
-  retro/[libretro, playerds, touch]
+  retro/[libretro, playerds, playervideo, touch]
 
 doAssert parseDsLayout("combined") == CombinedDs
 doAssert parseDsLayout("separate") == SeparateDs
+block:
+  let profile = selectDualScreen(NoDsLayout, true)
+  doAssert profile.layout == SeparateDs
+  doAssert profile.panelWidth == 256 and profile.panelHeight == 224
+  doAssert profile.desktopScale == 2
+  doAssert profile.options == @[("decompbound_dual_screen", "enabled")]
+  doAssert profile.topTitle == "Game" and profile.bottomTitle == "Party"
+  doAssert selectDualScreen(SeparateDs).options == DsOptions
+  doAssert selectDualScreen(NoDsLayout).options.len == 0
+  for layout in [CombinedDs, SeparateDs]:
+    var rejected = false
+    try: discard selectDualScreen(layout, true)
+    except ValueError: rejected = true
+    doAssert rejected
+
+block:
+  var gesture: CompanionGesture
+  let inside = dsPointer(SeparateDs, 1, 1024, 768, 149, 69, true, 256, 224)
+  doAssert gesture.companionPointer(inside, true).pressed
+  doAssert not gesture.companionPointer(PointerInput(), true).pressed
+  doAssert not gesture.companionPointer(inside, true).pressed
+  discard gesture.companionPointer(PointerInput(), false)
+  doAssert gesture.companionPointer(inside, true).pressed
+
+block:
+  let image = newImage(256, 448)
+  for index in 0 ..< image.data.len:
+    image.data[index] = if index < 256 * 224: rgbx(255, 0, 0, 255)
+      else: rgbx(0, 0, 255, 255)
+  let
+    top = dsScreen(image, nil, 0, 256, 224)
+    bottom = dsScreen(image, nil, 1, 256, 224)
+  doAssert top.width == 256 and top.height == 224
+  doAssert top.data[^1] == rgbx(255, 0, 0, 255)
+  doAssert bottom.data[0] == rgbx(0, 0, 255, 255)
+  let fitted = fitFrame(bottom, nil, 1024, 768)
+  doAssert fitted.data[48 * 1024 + 128] == bottom.data[0]
+  doAssert fitted.data[47 * 1024 + 128] == rgbx(0, 0, 0, 255)
+  doAssert fitted.data[48 * 1024 + 127] == rgbx(0, 0, 0, 255)
+  for scale in 2 .. 5:
+    let
+      width = 256 * scale + 10
+      height = 224 * scale + 12
+    for (x, y) in [(0, 0), (255, 223), (64, 64), (7, 7)]:
+      let pointer = dsPointer(SeparateDs, 1, width, height,
+        5 + x * scale, 6 + y * scale, true, 256, 224)
+      doAssert pointer.pressed
+      doAssert (pointer.x.int + 32767) * 256 div 65534 == x
+      doAssert (pointer.y.int + 32767) * 448 div 65534 == y + 224
+    doAssert not dsPointer(SeparateDs, 1, width, height, 0, 0, true, 256, 224).pressed
+    doAssert not dsPointer(SeparateDs, 0, width, height, 12, 12, true, 256, 224).pressed
+  var stylus: DsStylus
+  let contact = TouchContact(id: 4, x: 128 + 7 * 3, y: 48 + 7 * 3, active: true)
+  let pointer = stylus.nativeDsPointer(@[contact], 1024, 768, 256, 224)
+  doAssert pointer.pressed
+  doAssert (pointer.x.int + 32767) * 256 div 65534 == 7
+  doAssert (pointer.y.int + 32767) * 448 div 65534 == 231
+  doAssert not stylus.nativeDsPointer(@[], 1024, 768, 256, 224).pressed
 var rejected = false
 try: discard parseDsLayout("unknown")
 except ValueError: rejected = true
