@@ -109,6 +109,17 @@ bool retro_load_game(const struct retro_game_info *game)
     return true;
 }
 void retro_unload_game(void) { trace("unload", 1); }
+#ifndef FULLPATH
+bool retro_unserialize(const void *data, size_t size)
+{
+    const char expected[] = "fixture-state";
+    if (!data || size != sizeof(expected) - 1 || memcmp(data, expected, size)) return false;
+    frames = 0;
+    memory[4] = 42;
+    trace("state_loaded", 42);
+    return true;
+}
+#endif
 void *retro_get_memory_data(unsigned id) { return id == RETRO_MEMORY_SAVE_RAM ? memory : NULL; }
 size_t retro_get_memory_size(unsigned id)
 {

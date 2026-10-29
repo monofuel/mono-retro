@@ -9,8 +9,10 @@ const
   PollIntervalMs = 2
   NanosecondsPerMillisecond = 1_000_000
   ExitHoldSeconds = 2
-  Help = """Usage: mono-retro-player --core:PATH --rom:PATH --save-dir:DIR [--frames:N] [--mute]
+  Help = """Usage: mono-retro-player --core:PATH --rom:PATH --save-dir:DIR [--frames:N] [--mute] [--load-state:PATH]
 Libretro player with Slappy audio. --mute opens no audio device.
+--load-state:PATH is a startup-only CLI import of a core-defined format.
+Desktop: drop a state file onto a window.
 Arrows: D-pad. X/Z: A/B. A/S: L/R. PageUp/PageDown: L2/R2. Enter: Start. Backspace: Select.
 Escape or window close exits. The first connected gamepad uses RetroPad positions.
 DS: --ds-layout:combined|separate. EarthBound: --earthbound-ds. W/Q: X/Y.
@@ -30,7 +32,7 @@ proc stopHandler(signal: cint) {.noconv.} =
 proc main() =
   ## Run one core with an independent save directory.
   var
-    corePath, romPath, saveDirectory: string
+    corePath, romPath, saveDirectory, statePath: string
     limit = 0'u64
     muted = false
     dsLayout = NoDsLayout
@@ -44,6 +46,9 @@ proc main() =
     of "core": corePath = value
     of "rom": romPath = value
     of "save-dir": saveDirectory = value
+    of "load-state":
+      if value.len == 0: raise newException(IOError, "Missing state path")
+      statePath = value
     of "mute": muted = true
     of "ds-layout":
       if earthboundDs:
@@ -65,7 +70,7 @@ proc main() =
   let desktop = settings.displayBackend() == "x11"
   validateDsDisplay(dual.layout, settings.displayBackend(), settings.outputs.len)
   let session = openCore(corePath, romPath, saveDirectory, captureAudio = not muted,
-    options = dual.options)
+    options = dual.options, statePath = statePath)
   defer: session.close()
   if dual.layout != NoDsLayout:
     validateDsFrame(session.av.geometry.baseWidth.int, session.av.geometry.baseHeight.int,
@@ -103,6 +108,7 @@ proc main() =
   posix.signal(SIGTERM, stopHandler)
   echo "Core: ", session.info.libraryName, " ", session.info.libraryVersion
   echo "Save: ", session.savePath
+  if statePath.len > 0: echo "State: ", statePath
   echo "Audio: ", (if muted: "muted" else: "Slappy"), "; core rate: ", session.av.timing.fps
   var
     clock = newFrameClock(session.av.timing.fps, getMonoTime().ticks)
@@ -115,8 +121,30 @@ proc main() =
     exitStarted: MonoTime
     stylus: DsStylus
     companionGesture: CompanionGesture
+  proc installStateDrop(target: Window) =
+    ## Import dropped opaque state onto this desktop window.
+    target.onFileDrop = proc(fileName: string, fileData: string) =
+      try:
+        session.importStateData(fileData, fileName)
+        if sound != nil: sound.reset()
+        clock.reset(getMonoTime().ticks)
+        lastSave = getMonoTime()
+        stylus = DsStylus()
+        companionGesture = CompanionGesture()
+        target.focus()
+      except CatchableError as error:
+        stderr.writeLine("Rejected state " & fileName & ": " & error.msg)
+  if desktop:
+    for index in 0 ..< screen.count():
+      installStateDrop(screen.window(index))
   while not stopping and not session.shutdown and (limit == 0 or session.frames < limit):
-    if not screen.poll(): break
+    try:
+      if not screen.poll(): break
+    except IOError as error:
+      # Windy reads dropped files before invoking the application's drop callback.
+      if not desktop: raise
+      stderr.writeLine("Could not read dropped state: " & error.msg)
+      continue
     if sound != nil: sound.pump()
     var pads = pollGamepads()
     for pad in pads.mitems: pad = pad.mapAnbernic()

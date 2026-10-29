@@ -1,5 +1,5 @@
 import
-  std/[monotimes, os, osproc, strutils, tempfiles, times],
+  std/[monotimes, os, osproc, strutils, tempfiles, times, uri],
   vmath,
   windy/platforms/linux/x11/[x, xevent, xlib]
 
@@ -208,6 +208,87 @@ proc testDs(d: Display, directory: string) =
     doAssert readFile(trace).endsWith("unload=1\ndeinit=1\n")
   delEnv("MONO_RETRO_FIXTURE_TRACE")
 
+proc dropFile(d: Display, window: Window, path: string) =
+  ## Deliver a real URI-list selection through Windy's X11 file-drop event path.
+  let
+    property = d.XInternAtom("windy_xdndTargetProperty", 0)
+    target = d.XInternAtom("text/uri-list", 0)
+    uri = "file://" & encodeUrl(path, false).replace("%2F", "/") & "\r\n"
+  d.XChangeProperty(window, property, target, 8, pmReplace, uri.cstring, uri.len.cint)
+  var event = XEvent(selection: XSelectionEvent(kind: xeSelection, display: d,
+    requestor: window, selection: d.XInternAtom("XdndSelection", 0),
+    target: target, property: property))
+  doAssert sendEvent(d, window, 0, 0, addr event) != 0
+  d.XFlush()
+
+proc waitImports(trace: string, count: int) =
+  ## Wait for the core to acknowledge a state through the actual ABI.
+  let deadline = getMonoTime() + initDuration(seconds = 5)
+  while not fileExists(trace) or readFile(trace).count("state_loaded=42\n") < count:
+    doAssert getMonoTime() < deadline, "Dropped state did not reach the core"
+    sleep(10)
+
+proc testStateDrops(d: Display, directory: string) =
+  ## Exercise startup import and successful/rejected drops on single and dual windows.
+  let
+    rom = directory / "drop.test"
+    state = directory / "screen state with spaces.png"
+    bad = directory / "plain bad state.png"
+  writeFile(state, "fixture-state")
+  writeFile(bad, "bad-state")
+  for dual in [false, true]:
+    let
+      trace = directory / (if dual: "drop-dual-trace" else: "drop-single-trace")
+      saves = directory / (if dual: "drop-dual-saves" else: "drop-single-saves")
+    putEnv("MONO_RETRO_FIXTURE_TRACE", trace)
+    writeFile(rom, if dual: "E" else: "T")
+    createDir(saves)
+    writeFile(saves / "drop.srm", repeat('\0', 4) & char(99) & repeat('\0', 11))
+    var arguments = @[
+      "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
+      "--save-dir:" & saves, "--load-state:" & state]
+    if dual: arguments.add("--earthbound-ds")
+    let process = startProcess(absolutePath("build/mono-retro-player"), args = arguments,
+      options = {poParentStreams})
+    defer:
+      if process.running(): process.terminate()
+      discard process.waitForExit(5000)
+      process.close()
+    let
+      top = findWindow(d, if dual: " | Game" else: "")
+      bottom = if dual: findWindow(d, " | Party") else: top
+    d.XMoveWindow(top, 0, 0)
+    if dual: d.XMoveWindow(bottom, 600, 0)
+    d.XSetInputFocus(top, rtRoot)
+    d.XFlush()
+    waitFrames(trace, 3)
+    doAssert readFile(trace).contains("loaded_byte=42\n")
+    var imports = 1
+    for window in (if dual: @[top, bottom] else: @[top]):
+      d.XSetInputFocus(d.defaultRootWindow, rtRoot)
+      d.XSync(false)
+      sleep(100)
+      let before = frameCount(trace)
+      dropFile(d, window, state)
+      inc imports
+      waitImports(trace, imports)
+      waitFrames(trace, before + 3)
+      doAssert process.running()
+      let beforeBad = frameCount(trace)
+      dropFile(d, window, bad)
+      waitFrames(trace, beforeBad + 3)
+      doAssert process.running()
+      doAssert readFile(trace).count("state_loaded=42\n") == imports
+      let beforeMissing = frameCount(trace)
+      dropFile(d, window, directory / "missing screenstate.png")
+      waitFrames(trace, beforeMissing + 3)
+      doAssert process.running()
+      doAssert readFile(trace).count("state_loaded=42\n") == imports
+    closeWindow(d, bottom)
+    doAssert process.waitForExit(5000) == 0
+    doAssert readFile(saves / "drop.srm")[4] == char(123)
+  delEnv("MONO_RETRO_FIXTURE_TRACE")
+
 proc main() =
   ## Check presentation, input, pausing and shutdown on isolated Xvfb.
   let
@@ -296,6 +377,7 @@ proc main() =
     doAssert contents.len == 16 and contents[4] == char(123)
     doAssert readFile(trace).endsWith("unload=1\ndeinit=1\n")
   testDs(d, directory)
+  testStateDrops(d, directory)
   if paramCount() == 3:
     putEnv("ALSOFT_DRIVERS", "null")
     let seed = readFile(paramStr(3))
@@ -317,7 +399,8 @@ proc main() =
       doAssert process.waitForExit(30000) == 0
       doAssert getFileSize(saves / paramStr(2).splitFile.name & ".srm") > 0
     doAssert readFile(paramStr(3)) == seed
-  if paramCount() == 2:
+  if paramCount() in [2, 4]:
+    if paramCount() == 4: doAssert paramStr(3) == "--load-state"
     putEnv("ALSOFT_DRIVERS", "null")
     let earthbound = paramStr(1).extractFilename.startsWith("decompbound_libretro")
     for dual in 0 .. (if earthbound: 1 else: 0):
@@ -326,6 +409,7 @@ proc main() =
         "--core:" & absolutePath(paramStr(1)), "--rom:" & absolutePath(paramStr(2)),
         "--save-dir:" & saves, "--frames:180"]
       if dual == 1: arguments.add("--earthbound-ds")
+      if paramCount() == 4: arguments.add("--load-state:" & absolutePath(paramStr(4)))
       let process = startProcess(absolutePath("build/mono-retro-player"), args = arguments,
         options = {poParentStreams})
       defer:

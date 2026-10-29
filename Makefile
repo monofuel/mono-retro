@@ -11,6 +11,7 @@ check:
 	nim check tests/test_playercore.nim
 	nim check tests/test_playeraudio.nim
 	nim check tests/test_playerds.nim
+	nim check tests/test_playerstate.nim
 	nim check tools/prepare_lost_in_blue.nim
 test:
 	mkdir -p build
@@ -79,6 +80,7 @@ test-player: player-fixtures prepare-lost-in-blue-tool
 	nim r -o:build/test-playercore tests/test_playercore.nim
 	ALSOFT_DRIVERS=null nim r -o:build/test-playeraudio tests/test_playeraudio.nim
 	nim r -o:build/test-playerds tests/test_playerds.nim
+	nim r -o:build/test-playerstate tests/test_playerstate.nim
 	nim r -o:build/test-prepare-lost-in-blue tests/test_prepare_lost_in_blue.nim
 test-player-x11: player-desktop player-fixtures
 	nim r -o:build/integration-player-x11 tests/integration_player_x11.nim

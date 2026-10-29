@@ -3,8 +3,8 @@
 A libretro player using Nim, Windy, Pixie, Paddy and Slappy. Targets include
 Mother 3 with mGBA on X11, decompbound on both handhelds and melonDS DS on X11
 and the RG DS Plus. The player
-can run independently or as a child of the launcher. Save states and ROM browsing
-are future work.
+can run independently or as a child of the launcher. Existing core-defined states
+can be imported; state creation and ROM browsing are future work.
 
 ## Build and run
 
@@ -45,6 +45,26 @@ library is at `lib/retroarch/cores/mgba_libretro.so` inside that package.
 Copy it into `build/cores/` if using the command above. A normal system
 package providing the mGBA libretro core also works. These are external runtime
 artifacts, not Nim dependencies; no SDL frontend is used.
+
+## Import an existing state
+
+Add `--load-state:/absolute/path/to/state` to the normal player command, or
+drop a state file onto any running desktop player window. The frontend passes
+the bytes to the core's `retro_unserialize`; formats and compatibility belong
+to the core. Decompbound accepts its raw DBST v1/v2 `.state` files and F12 PNG
+screenstates containing `ebSt`. Other cores require their own state formats.
+
+Startup imports run after disk SRAM loading. Invalid/missing state files or
+unsupported cores fail startup before save persistence is enabled. A successful
+drop clears queued audio and input, restarts frame pacing, and focuses that
+window. Rejected drops report a reason in the terminal while the app stays
+open; decompbound validates before changing its live state.
+
+State import can restore battery SRAM, which normal autosave/exit persists in
+the selected `--save-dir`. Use a separate test-save directory. Source state
+files are never rewritten. Native DRM has no desktop file-drop events; use
+`--load-state` on handhelds. The player does not create states or register state
+hotkeys, and cores with no state support still work normally without this option.
 
 ## Controls
 

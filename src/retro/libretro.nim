@@ -73,6 +73,7 @@ type
   AudioBatchCallback = proc(data: ptr int16, frames: csize_t): csize_t {.cdecl.}
   PollCallback = proc() {.cdecl.}
   InputCallback = proc(port, device, index, id: cuint): int16 {.cdecl.}
+  UnserializeCallback = proc(data: pointer, size: csize_t): bool {.cdecl.}
   CoreSession* = ref object
     library: LibHandle
     initialized, loaded, ready: bool
@@ -287,6 +288,40 @@ proc save*(session: CoreSession) =
     writeSave(session.savePath, contents)
     session.saved = contents
 
+proc importStateData*(session: CoreSession, contents: string, source: string) =
+  ## Pass opaque core-defined save-state bytes through optional retro_unserialize.
+  if session == nil or not session.loaded:
+    raise newException(IOError, "State import requires a loaded session")
+  if contents.len == 0:
+    raise newException(IOError, "State file is empty: " & source)
+  if contents.len > MaxSaveBytes:
+    raise newException(IOError, "State file exceeds supported size")
+  # Resolve the callback only for an explicit import so cores without it still open.
+  let address = symAddr(session.library, "retro_unserialize")
+  if address == nil:
+    raise newException(IOError, "Core does not support save state import")
+  let
+    unserialize = cast[UnserializeCallback](address)
+    accepted = unserialize(unsafeAddr contents[0], csize_t(contents.len))
+  session.check()
+  if not accepted:
+    raise newException(IOError, "Core rejected the save state")
+  session.audioSamples.setLen(0)
+  session.buttons = 0
+  session.pointerInput = PointerInput()
+
+proc importState*(session: CoreSession, path: string) =
+  ## Read opaque save-state bytes from a file and import them.
+  if path.len == 0: return
+  if not fileExists(path):
+    raise newException(IOError, "Missing state: " & path)
+  let size = getFileSize(path)
+  if size <= 0:
+    raise newException(IOError, "State file is empty: " & path)
+  if size > MaxSaveBytes:
+    raise newException(IOError, "State file exceeds supported size")
+  importStateData(session, readFile(path), path)
+
 proc close*(session: CoreSession) =
   ## Release a partially initialized session even when saving fails.
   if session == nil or session.library == nil: return
@@ -304,7 +339,7 @@ proc close*(session: CoreSession) =
     active = nil
 
 proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false,
-    options: seq[CoreOption] = @[]): CoreSession =
+    options: seq[CoreOption] = @[], statePath = ""): CoreSession =
   ## Load one explicitly selected software core and an independent save history.
   if active != nil: raise newException(ValueError, "Only one libretro core can be active")
   if not fileExists(corePath): raise newException(IOError, "Missing core: " & corePath)
@@ -378,6 +413,8 @@ proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false,
         raise newException(IOError, "Existing save does not fit the core's save RAM; refusing to overwrite it")
       if contents.len > 0: copyMem(target, unsafeAddr contents[0], contents.len)
       session.saved = contents
+    # Import before ready so a failed load cannot persist SRAM on cleanup.
+    importState(session, statePath)
     session.ready = true
   except:
     session.close()
