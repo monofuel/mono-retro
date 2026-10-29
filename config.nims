@@ -1,6 +1,22 @@
-import std/os
+import std/[os, strutils]
+
+let
+  testBuild = relativePath(projectPath(), thisDir()).startsWith("tests" & DirSep)
+  debugBuild = defined(debug) or (testBuild and not defined(danger))
+
+if debugBuild:
+  switch("define", "debug")
+  switch("undef", "release")
+  switch("undef", "danger")
+  for option in ["boundChecks", "rangeChecks", "overflowChecks", "objChecks",
+      "fieldChecks", "assertions", "stackTrace", "lineTrace"]:
+    switch(option, "on")
+else:
+  # Define release explicitly for dependencies when selecting danger in NimScript.
+  switch("define", "release")
+  switch("define", "danger")
+
 switch("path", thisDir() / "src")
-switch("define", "release")
 switch("define", "useCpu")
 switch("define", "windyBackends=" & getEnv("MONO_RETRO_BACKENDS", "x11"))
 if getEnv("MONO_RETRO_TARGET") == "arm64":

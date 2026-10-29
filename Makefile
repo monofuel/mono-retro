@@ -1,5 +1,6 @@
 .PHONY: check test test-audio build arm64
 check:
+	nim check tests/test_shipping_profile.nim
 	nim check src/hwtest.nim
 	nim check src/launcher.nim
 	nim check src/player.nim
@@ -15,6 +16,7 @@ check:
 	nim check tools/prepare_lost_in_blue.nim
 test:
 	mkdir -p build
+	nim r -o:build/test-shipping-profile tests/test_shipping_profile.nim
 	nim r tests/test_hardware.nim
 	nim r tests/test_gamepad.nim
 	nim r tests/test_launcher.nim

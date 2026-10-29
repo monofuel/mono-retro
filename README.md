@@ -69,6 +69,13 @@ the disk image or change Wi-Fi configuration.
 
 ## Build and tests
 
+Applications use the shipping profile by default: speed optimization with
+compiler runtime checks disabled (`danger`), including library release paths.
+For checked developer builds with stack traces, use `-d:debug`, for example
+`nim c -d:debug -o:build/mono-retro-player-debug src/player.nim`.
+Tests are checked by default; `-d:danger` explicitly tests shipping behavior.
+Explicit input validation and normal exceptions remain enabled in both profiles.
+
 Requires Nim 2.x, a C compiler, Linux development headers, libudev, libevdev
 and make. The sibling Paddy checkout's `anbernic-handhelds` branch supplies the
 automatic mdev discovery support. Register both checkouts in the parent Nimby workspace:
