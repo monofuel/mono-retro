@@ -9,7 +9,7 @@ type
 
 proc physicalButton*(device, label: string): GamepadButton =
   ## Translate printed legends to Paddy's Xbox-style button positions.
-  let anbernic = device in ["ANBERNIC-keys", "ANBERNIC-rk3568-keys"]
+  let anbernic = device in ["ANBERNIC-keys", "ANBERNIC-rk3568-keys", "retrogame_joypad"]
   case label
   of "A": (if anbernic: GamepadB else: GamepadA)
   of "B": (if anbernic: GamepadA else: GamepadB)

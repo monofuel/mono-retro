@@ -4,7 +4,7 @@ import
 
 type
   DeviceKind* = enum
-    genericDevice, rgSpDevice, rgDsPlusDevice
+    genericDevice, rgSpDevice, rgDsPlusDevice, rgDsPlusRocknixDevice
   StickBinding* = object
     label*, device*: string
     x*, y*: uint16
@@ -21,11 +21,14 @@ type
 const
   RgSpProfile = staticRead("../../profiles/rg-sp.json")
   RgDsPlusProfile = staticRead("../../profiles/rg-ds-plus.json")
+  RgDsPlusRocknixProfile = staticRead("../../profiles/rg-ds-plus-rocknix.json")
 
 proc identifyDevice*(compatible: string, inputs: seq[string],
     framebufferSize: string, dsiCount: int): DeviceKind =
   ## Identify supported boards from a combination of hardware signatures.
-  if "rockchip,rk3568" in compatible and "ANBERNIC-rk3568-keys" in inputs and dsiCount == 2:
+  if "anbernic,rg-ds-plus" in compatible and "retrogame_joypad" in inputs and dsiCount == 2:
+    rgDsPlusRocknixDevice
+  elif "rockchip,rk3568" in compatible and "ANBERNIC-rk3568-keys" in inputs and dsiCount == 2:
     rgDsPlusDevice
   elif ("sun50iw9" in compatible or "sun50i-h700" in compatible) and
       "ANBERNIC-keys" in inputs and framebufferSize.startsWith("720,"):
@@ -134,10 +137,12 @@ proc parseSettings*(arguments: seq[string], detected = genericDevice): Settings 
       of "generic": device = genericDevice
       of "rg-sp": device = rgSpDevice
       of "rg-ds-plus": device = rgDsPlusDevice
+      of "rg-ds-plus-rocknix": device = rgDsPlusRocknixDevice
       else: raise newException(ValueError, "Unknown device: " & value)
   case device
   of rgSpDevice: result.applyProfile(parseJson(RgSpProfile))
   of rgDsPlusDevice: result.applyProfile(parseJson(RgDsPlusProfile))
+  of rgDsPlusRocknixDevice: result.applyProfile(parseJson(RgDsPlusRocknixProfile))
   of genericDevice: discard
   parser = initOptParser(arguments)
   for kind, key, value in parser.getopt():

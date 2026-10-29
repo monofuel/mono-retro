@@ -29,6 +29,10 @@ proc remapButtons(buttons: uint64, dsPlus: bool): uint64 =
 
 proc mapAnbernic*(pad: Gamepad): Gamepad =
   ## Keep handheld quirks in the application and use only Paddy's public API.
+  if pad.name == "retrogame_joypad":
+    result = pad
+    result.axes[GamepadLStickY.int] = -pad.axis(GamepadLStickY)
+    return
   if pad.name notin ["ANBERNIC-keys", "ANBERNIC-rk3568-keys"]:
     return pad
   let dsPlus = pad.name == "ANBERNIC-rk3568-keys"
@@ -51,4 +55,4 @@ proc leftStickYUp*(pad: Gamepad): float32 =
   result = pad.axis(GamepadLStickY)
   when defined(linux):
     # Native evdev Y points down; the DS Plus adapter above already flips it.
-    if pad.name != "ANBERNIC-rk3568-keys": result = -result
+    if pad.name notin ["ANBERNIC-rk3568-keys", "retrogame_joypad"]: result = -result

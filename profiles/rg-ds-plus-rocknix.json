@@ -1,0 +1,165 @@
+{
+  "title": "RG DS PLUS",
+  "batterySupply": "battery",
+  "batteryCurrentSupply": "battery",
+  "display": "drm",
+  "drmDevice": "/dev/dri/card0",
+  "outputs": [
+    "DSI-1",
+    "DSI-2"
+  ],
+  "audioDevice": "mono_retro_ds_plus",
+  "inputNames": [
+    "retrogame_joypad",
+    "adc-keys-back",
+    "gpio-keys-volume",
+    "Goodix Capacitive TouchScreen"
+  ],
+  "touchName": "Goodix Capacitive TouchScreen",
+  "rotation": 0,
+  "touchRotation": 0,
+  "toneKey": 315,
+  "sticks": [
+    {
+      "label": "LEFT STICK",
+      "device": "retrogame_joypad",
+      "x": 0,
+      "y": 1
+    }
+  ],
+  "bindings": [
+    {
+      "label": "UP",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 544,
+      "value": 1
+    },
+    {
+      "label": "DOWN",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 545,
+      "value": 1
+    },
+    {
+      "label": "LEFT",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 546,
+      "value": 1
+    },
+    {
+      "label": "RIGHT",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 547,
+      "value": 1
+    },
+    {
+      "label": "A",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 305,
+      "value": 1
+    },
+    {
+      "label": "B",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 304,
+      "value": 1
+    },
+    {
+      "label": "X",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 307,
+      "value": 1
+    },
+    {
+      "label": "Y",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 308,
+      "value": 1
+    },
+    {
+      "label": "L",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 310,
+      "value": 1
+    },
+    {
+      "label": "R",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 311,
+      "value": 1
+    },
+    {
+      "label": "SELECT",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 314,
+      "value": 1
+    },
+    {
+      "label": "START",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 315,
+      "value": 1
+    },
+    {
+      "label": "MENU",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 316,
+      "value": 1
+    },
+    {
+      "label": "BACK",
+      "device": "adc-keys-back",
+      "kind": 1,
+      "code": 309,
+      "value": 1
+    },
+    {
+      "label": "VOL-",
+      "device": "gpio-keys-volume",
+      "kind": 1,
+      "code": 114,
+      "value": 1
+    },
+    {
+      "label": "VOL+",
+      "device": "gpio-keys-volume",
+      "kind": 1,
+      "code": 115,
+      "value": 1
+    },
+    {
+      "label": "L2",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 312,
+      "value": 1
+    },
+    {
+      "label": "R2",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 313,
+      "value": 1
+    },
+    {
+      "label": "L3",
+      "device": "retrogame_joypad",
+      "kind": 1,
+      "code": 317,
+      "value": 1
+    }
+  ]
+}

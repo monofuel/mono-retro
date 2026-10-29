@@ -215,6 +215,13 @@ to save and exit to the launcher.
 
 #### Lost in Blue
 
+The `rg-ds-plus-rocknix` device profile supports the source-built 7.0.2 kernel:
+`retrogame_joypad` controls, standard left-stick axes, Goodix touch and RK817
+battery reporting. Automatic detection requires the Plus device-tree identity,
+controller and two DSI outputs. `--device:rg-ds-plus-rocknix` is an explicit
+override. Vendor profiles remain separate; monorig selects the appropriate
+network/audio setup for the running kernel.
+
 `--ds-layout:separate` presents the DS top screen on DSI-1 and touch screen on
 DSI-2. Each 256×192 image fills its 1024×768 panel at exactly 4× integer scaling.
 Windy's native touch contacts supply the stylus; the first finger stays selected
