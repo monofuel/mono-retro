@@ -4,6 +4,16 @@ import
   retro/[anbernic, playerclock, playerinput, playersave, playervideo]
 
 block:
+  let
+    values = [0xa0123456'u32, 0x7fabcdef'u32, 0x99010203'u32, 0x00456789'u32]
+    expected = @[rgbx(0x12, 0x34, 0x56, 255), rgbx(0xab, 0xcd, 0xef, 255),
+      rgbx(1, 2, 3, 255), rgbx(0x45, 0x67, 0x89, 255)]
+  var bytes: array[19, byte]
+  copyMem(addr bytes[1], unsafeAddr values[0], 8)
+  copyMem(addr bytes[10], unsafeAddr values[2], 8)
+  doAssert copyFrame(nil, addr bytes[1], 2, 2, 9, PixelXrgb8888).data == expected
+
+block:
   var pixels = [0x00ff0000'u32, 0x0000ff00, 0xdeadbeef'u32, 0x000000ff, 0x00ffffff, 0xdeadbeef'u32]
   let image = copyFrame(nil, addr pixels[0], 2, 2, 12, PixelXrgb8888)
   doAssert image.data == @[rgbx(255, 0, 0, 255), rgbx(0, 255, 0, 255),

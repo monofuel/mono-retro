@@ -34,21 +34,23 @@ proc copyFrame*(previous: Image, data: pointer, width, height, pitch: int,
   if result == nil or result.width != width or result.height != height:
     result = newImage(width, height)
   let source = cast[ptr UncheckedArray[byte]](data)
+  if format == PixelXrgb8888:
+    for y in 0 ..< height:
+      for x in 0 ..< width:
+        var value: uint32
+        copyMem(addr value, addr source[y * pitch + x * 4], 4)
+        result.data[y * width + x] = rgbx(uint8((value shr 16) and 255),
+          uint8((value shr 8) and 255), uint8(value and 255), 255)
+    return
+  let greenBits = if format == PixelRgb565: 6 else: 5
   for y in 0 ..< height:
     for x in 0 ..< width:
       var value: uint32
-      copyMem(addr value, addr source[y * pitch + x * bytes], bytes)
-      var r, g, b: uint8
-      if format == PixelXrgb8888:
-        r = uint8((value shr 16) and 255)
-        g = uint8((value shr 8) and 255)
-        b = uint8(value and 255)
-      else:
-        let
-          greenBits = if format == PixelRgb565: 6 else: 5
-          red = (value shr (5 + greenBits)) and 31
-          green = (value shr 5) and uint32((1 shl greenBits) - 1)
-          blue = value and 31
+      copyMem(addr value, addr source[y * pitch + x * 2], 2)
+      let
+        red = (value shr (5 + greenBits)) and 31
+        green = (value shr 5) and uint32((1 shl greenBits) - 1)
+        blue = value and 31
         r = uint8((red shl 3) or (red shr 2))
         g = if greenBits == 6: uint8((green shl 2) or (green shr 4))
           else: uint8((green shl 3) or (green shr 2))

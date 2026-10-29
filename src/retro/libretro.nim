@@ -1,7 +1,7 @@
 import
   std/[dynlib, math, os, strutils, tables],
   pixie,
-  ./[playervideo, playersave]
+  ./[playerprofile, playervideo, playersave]
 
 const
   HeaderDirectory = currentSourcePath.parentDir / "../../third_party"
@@ -90,7 +90,7 @@ type
     buttons*: uint16
     pointerInput*: PointerInput
     frames*, videoFrames*, audioFrames*: uint64
-    captureAudio: bool
+    captureAudio, captureVideo: bool
     audioSamples: seq[int16]
     savePath*: string
     apiVersion: proc(): cuint {.cdecl.}
@@ -219,7 +219,9 @@ proc video(data: pointer, width, height: cuint, pitch: csize_t) {.cdecl.} =
   ## Retain video pixels independently of the core's next emulation step.
   if active.failure.len > 0: return
   try:
-    active.image = copyFrame(active.image, data, int(width), int(height), int(pitch), active.pixelFormat)
+    if active.captureVideo:
+      measured(VideoCopy):
+        active.image = copyFrame(active.image, data, int(width), int(height), int(pitch), active.pixelFormat)
     if data != nil: inc active.videoFrames
   except CatchableError as error:
     active.failure = error.msg
@@ -229,8 +231,9 @@ proc audio(left, right: int16) {.cdecl.} =
   inc active.audioFrames
   if not active.captureAudio or active.failure.len > 0: return
   try:
-    active.audioSamples.add(left)
-    active.audioSamples.add(right)
+    measured(AudioCapture):
+      active.audioSamples.add(left)
+      active.audioSamples.add(right)
   except CatchableError as error:
     active.failure = error.msg
 
@@ -246,8 +249,9 @@ proc audioBatch(data: ptr int16, frames: csize_t): csize_t {.cdecl.} =
       offset = active.audioSamples.len
       count = int(frames) * 2
     if count > high(int) - offset: raise newException(ValueError, "Core audio batch is too large")
-    active.audioSamples.setLen(offset + count)
-    copyMem(addr active.audioSamples[offset], data, count * sizeof(int16))
+    measured(AudioCapture):
+      active.audioSamples.setLen(offset + count)
+      copyMem(addr active.audioSamples[offset], data, count * sizeof(int16))
   except CatchableError as error:
     active.failure = error.msg
 
@@ -339,13 +343,14 @@ proc close*(session: CoreSession) =
     active = nil
 
 proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false,
-    options: seq[CoreOption] = @[], statePath = ""): CoreSession =
+    options: seq[CoreOption] = @[], statePath = "", captureVideo = true): CoreSession =
   ## Load one explicitly selected software core and an independent save history.
+  ## Disabling captureVideo discards pixels without requesting skipped core rendering.
   if active != nil: raise newException(ValueError, "Only one libretro core can be active")
   if not fileExists(corePath): raise newException(IOError, "Missing core: " & corePath)
   if not fileExists(romPath): raise newException(IOError, "Missing ROM: " & romPath)
   result = CoreSession(romPath: absolutePath(romPath), saveDirectory: absolutePath(saveDirectory),
-    captureAudio: captureAudio, options: options)
+    captureAudio: captureAudio, captureVideo: captureVideo, options: options)
   let session = result
   session.systemDirectory = session.saveDirectory / "system"
   session.savePath = session.saveDirectory / romPath.splitFile.name & ".srm"

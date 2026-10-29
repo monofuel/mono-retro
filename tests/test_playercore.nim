@@ -36,6 +36,15 @@ proc main() =
     again.close()
     doAssert readFile(trace).contains("loaded_byte=123\n")
 
+  writeFile(rom, "D")
+  let headless = openCore(core, rom, directory / "no-video", captureAudio = true,
+    captureVideo = false)
+  headless.step(256)
+  doAssert headless.image == nil
+  doAssert headless.videoFrames == 1 and headless.audioFrames > 0
+  doAssert headless.takeAudio().len > 0
+  headless.close()
+
   for mode in ["B", "H", "F"]:
     writeFile(rom, mode)
     var

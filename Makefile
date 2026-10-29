@@ -1,5 +1,6 @@
 .PHONY: check test test-audio build arm64
 check:
+	nim check tools/benchmark_core.nim
 	nim check tests/test_shipping_profile.nim
 	nim check src/hwtest.nim
 	nim check src/launcher.nim
@@ -72,6 +73,18 @@ player-rg-sp:
 player-rg-ds-plus:
 	mkdir -p build
 	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=drm nim c -o:build/mono-retro-player-rg-ds-plus src/player.nim
+
+.PHONY: benchmark-core benchmark-core-arm64 player-timings-rg-ds-plus
+benchmark-core:
+	mkdir -p build
+	nim c -o:build/benchmark-core tools/benchmark_core.nim
+benchmark-core-arm64:
+	mkdir -p build
+	MONO_RETRO_TARGET=arm64 nim c -o:build/benchmark-core-arm64 tools/benchmark_core.nim
+player-timings-rg-ds-plus:
+	mkdir -p build
+	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=drm nim c -d:playerTimings -o:build/player-timings-rg-ds-plus src/player.nim
+
 player-fixtures:
 	mkdir -p build
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC tests/fixtures/player_core.c -o build/player-fixture.so

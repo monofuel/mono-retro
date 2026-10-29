@@ -2,7 +2,7 @@ import
   std/[monotimes, os, parseopt, posix, strutils, times],
   paddy, pixie, windy,
   retro/[anbernic, display, libretro, playeraudio, playerclock, playerds, playerinput,
-    playervideo, settings]
+    playerprofile, playervideo, settings]
 
 const
   SaveIntervalSeconds = 5
@@ -121,6 +121,8 @@ proc main() =
     exitStarted: MonoTime
     stylus: DsStylus
     companionGesture: CompanionGesture
+  when defined(playerTimings):
+    var reusedScreens: array[2, int]
   proc installStateDrop(target: Window) =
     ## Import dropped opaque state onto this desktop window.
     target.onFileDrop = proc(fileName: string, fileData: string) =
@@ -137,16 +139,22 @@ proc main() =
   if desktop:
     for index in 0 ..< screen.count():
       installStateDrop(screen.window(index))
+  when defined(playerTimings):
+    resetTimings()
+    let loopStarted = getMonoTime()
   while not stopping and not session.shutdown and (limit == 0 or session.frames < limit):
     try:
-      if not screen.poll(): break
+      measured(Events):
+        if not screen.poll(): break
     except IOError as error:
       # Windy reads dropped files before invoking the application's drop callback.
       if not desktop: raise
       stderr.writeLine("Could not read dropped state: " & error.msg)
       continue
-    if sound != nil: sound.pump()
-    var pads = pollGamepads()
+    if sound != nil:
+      measured(AudioOutput): sound.pump()
+    var pads: seq[Gamepad]
+    measured(Events): pads = pollGamepads()
     for pad in pads.mitems: pad = pad.mapAnbernic()
     let
       pad = firstGamepad(pads)
@@ -172,7 +180,7 @@ proc main() =
       window = screen.window(inputScreen)
       size = window.framebufferSize
     if (now - lastSave).inSeconds >= SaveIntervalSeconds:
-      session.save()
+      measured(Saving): session.save()
       lastSave = now
     if (desktop and focusedIndex < 0) or size.x <= 0 or size.y <= 0:
       if not paused and sound != nil: sound.reset()
@@ -185,7 +193,7 @@ proc main() =
     paused = false
     if now.ticks < clock.deadline:
       let remainingMs = int((clock.deadline - now.ticks) div NanosecondsPerMillisecond)
-      sleep(min(PollIntervalMs, remainingMs))
+      measured(Waiting): sleep(min(PollIntervalMs, remainingMs))
       continue
     var held: set[Button]
     for (key, button) in KeyboardButtons:
@@ -205,8 +213,9 @@ proc main() =
       let held = if desktop: inputScreen == 1 and window.buttonDown[MouseLeft]
         else: stylus.active
       pointerInput = companionGesture.companionPointer(pointerInput, held)
-    session.step(buttons, pointerInput)
-    if sound != nil: sound.submit(session.takeAudio(), session.av.timing.sampleRate)
+    measured(CoreWork): session.step(buttons, pointerInput)
+    if sound != nil:
+      measured(AudioOutput): sound.submit(session.takeAudio(), session.av.timing.sampleRate)
     if dual.layout != NoDsLayout and session.image != nil:
       validateDsFrame(session.image.width, session.image.height, dual.panelWidth, dual.panelHeight)
     if dual.layout == SeparateDs and session.image != nil:
@@ -215,22 +224,39 @@ proc main() =
           output = screen.window(index)
           outputSize = output.framebufferSize
         if (desktop and output.minimized) or outputSize.x <= 0 or outputSize.y <= 0: continue
-        dsImages[index] = dsScreen(session.image, dsImages[index], index,
-          dual.panelWidth, dual.panelHeight)
-        canvases[index] = fitFrame(dsImages[index], canvases[index], outputSize.x.int, outputSize.y.int)
-        output.presentPixels(canvases[index])
+        var unchanged = false
+        measured(ScreenSplit):
+          # Native DRM retains scanout; desktop windows still redraw normally.
+          unchanged = not desktop and canvases[index] != nil and
+            canvases[index].width == outputSize.x.int and
+            canvases[index].height == outputSize.y.int and
+            sameDsScreen(session.image, dsImages[index], index, dual.panelWidth, dual.panelHeight)
+          if not unchanged:
+            dsImages[index] = dsScreen(session.image, dsImages[index], index,
+              dual.panelWidth, dual.panelHeight)
+        if unchanged:
+          when defined(playerTimings): inc reusedScreens[index]
+          continue
+        measured(Scaling):
+          canvases[index] = fitFrame(dsImages[index], canvases[index], outputSize.x.int, outputSize.y.int)
+        measured(Presentation): output.presentPixels(canvases[index])
     else:
       let
         output = screen.window(activeScreen)
         outputSize = output.framebufferSize
-      canvases[activeScreen] = fitFrame(session.image, canvases[activeScreen], outputSize.x.int, outputSize.y.int)
-      output.presentPixels(canvases[activeScreen])
+      measured(Scaling):
+        canvases[activeScreen] = fitFrame(session.image, canvases[activeScreen], outputSize.x.int, outputSize.y.int)
+      measured(Presentation): output.presentPixels(canvases[activeScreen])
     if session.av.timing.fps != fps:
       fps = session.av.timing.fps
       clock = newFrameClock(fps, getMonoTime().ticks)
     clock.advance(getMonoTime().ticks)
   echo "Frames: ", session.frames, "; video: ", session.videoFrames,
     "; audio frames: ", session.audioFrames
+  printTimings(session.frames)
+  when defined(playerTimings):
+    echo "Loop milliseconds: ", (getMonoTime() - loopStarted).inMilliseconds
+    echo "Unchanged native screens: ", reusedScreens
 
 when isMainModule:
   main()

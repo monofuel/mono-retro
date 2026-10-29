@@ -300,17 +300,44 @@ per save directory. Forced termination or power loss can lose changes since the
 last successful write. Save states, RTC persistence and cross-emulator save
 conversion are outside this MVP.
 
+## Performance diagnostics
+
+`make benchmark-core` (or `make benchmark-core-arm64`) builds an uncapped,
+headless benchmark using the same loader and state-import path as the player:
+
+```sh
+build/benchmark-core --core:PATH --rom:PATH --save-dir:DISPOSABLE_DIRECTORY \
+  --load-state:SCREENSTATE --earthbound-ds --frames:600
+```
+
+Core rendering and audio generation remain enabled. The default discards their
+output; `--copy-video` includes the frontend's normal video conversion but still
+opens no display or audio device. Initialization is excluded from the reported
+mean frame time. Always use a disposable save directory: SRAM is saved on exit.
+
+`make player-timings-rg-ds-plus` builds the full player with optional stage timers.
+It accepts the normal player arguments and reports exclusive milliseconds per
+emulated frame plus loop elapsed time on exit. `CoreWork` excludes the separately
+reported video/audio capture callbacks. Timers compile out of normal builds.
+
+The XRGB8888 conversion has its own constant-width loop, retaining padded and
+unaligned row support. Native dual-screen playback compares each panel with its
+last displayed pixels and retains unchanged scanout, avoiding redundant scaling
+and uploads. Changed pixels and resized outputs redraw. X11 continues presenting
+every frame so expose/focus/resize handling does not depend on retained scanout.
+
 ## Validation
 
 ```sh
 make check test test-player
-Xvfb :97 -screen 0 1024x768x24 -nolisten tcp &
+Xvfb :97 -screen 0 1600x1200x24 -nolisten tcp &
 xvfbPid=$!
 MONO_RETRO_TEST_DISPLAY=:97 make test-player-x11
 kill "$xvfbPid"
 ```
 
-Use an unused isolated display; the integration test refuses to run without
+Use an unused isolated display large enough for the combined DS resize test
+(778 pixels high); the integration test refuses to run without
 `MONO_RETRO_TEST_DISPLAY`. It checks displayed pixels, letterboxing on resize,
 keyboard events, focus pause, save files and clean Escape/SIGTERM exits. Automated
 audio playback uses OpenAL Soft's null backend, so tests do not play sounds on

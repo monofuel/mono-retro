@@ -5,6 +5,25 @@ import
 doAssert parseDsLayout("combined") == CombinedDs
 doAssert parseDsLayout("separate") == SeparateDs
 block:
+  let source = newImage(2, 4)
+  source.fill(rgbx(255, 0, 0, 255))
+  let
+    top = dsScreen(source, nil, 0, 2, 2)
+    bottom = dsScreen(source, nil, 1, 2, 2)
+  doAssert not sameDsScreen(source, nil, 0, 2, 2)
+  doAssert not sameDsScreen(source, newImage(1, 1), 0, 2, 2)
+  doAssert sameDsScreen(source, top, 0, 2, 2)
+  doAssert sameDsScreen(source, bottom, 1, 2, 2)
+  source.data[0] = rgbx(0, 255, 0, 255)
+  doAssert not sameDsScreen(source, top, 0, 2, 2)
+  doAssert sameDsScreen(source, bottom, 1, 2, 2)
+  discard dsScreen(source, top, 0, 2, 2)
+  doAssert sameDsScreen(source, top, 0, 2, 2)
+  source.data[^1] = rgbx(0, 0, 255, 255)
+  doAssert not sameDsScreen(source, bottom, 1, 2, 2)
+  doAssert sameDsScreen(source, top, 0, 2, 2)
+
+block:
   let profile = selectDualScreen(NoDsLayout, true)
   doAssert profile.layout == SeparateDs
   doAssert profile.panelWidth == 256 and profile.panelHeight == 224

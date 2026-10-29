@@ -81,6 +81,17 @@ proc dsScreen*(source, previous: Image, index: int; panelWidth = DsWidth,
   copyMem(addr result.data[0], unsafeAddr source.data[index * panelWidth * panelHeight],
     panelWidth * panelHeight * sizeof(ColorRGBX))
 
+proc sameDsScreen*(source, previous: Image, index: int; panelWidth = DsWidth,
+    panelHeight = DsHeight): bool =
+  ## Compare a panel with its retained pixels before updating persistent scanout.
+  validateDsFrame(source.width, source.height, panelWidth, panelHeight)
+  if index notin 0 .. 1: raise newException(ValueError, "Invalid DS screen")
+  if previous == nil or previous.width != panelWidth or previous.height != panelHeight:
+    return false
+  equalMem(unsafeAddr previous.data[0],
+    unsafeAddr source.data[index * panelWidth * panelHeight],
+    panelWidth * panelHeight * sizeof(ColorRGBX))
+
 proc dsPointer*(layout: DsLayout, index, width, height, x, y: int,
     pressed: bool; panelWidth = DsWidth, panelHeight = DsHeight): PointerInput =
   ## Map a visible lower-screen point back into the core's combined viewport.
