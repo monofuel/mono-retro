@@ -1,6 +1,6 @@
 import
   std/[monotimes, os, parseopt, strutils, times],
-  retro/[libretro, playerds]
+  retro/[libretro, playerds, playerprofile]
 
 const
   DefaultFrames = 600
@@ -41,7 +41,7 @@ proc main() =
   defer: session.close()
   let started = getMonoTime()
   for frame in 0 ..< frames:
-    session.step(0)
+    session.step(benchmarkButtons(frame.uint64))
     if session.shutdown: raise newException(IOError, "Core requested shutdown")
   let
     seconds = (getMonoTime() - started).inNanoseconds.float64 / NanosecondsPerSecond

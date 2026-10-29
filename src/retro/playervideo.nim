@@ -1,5 +1,7 @@
 import
-  pixie
+  std/algorithm,
+  pixie,
+  ./playerpixels
 
 type
   FrameViewport* = object
@@ -36,11 +38,7 @@ proc copyFrame*(previous: Image, data: pointer, width, height, pitch: int,
   let source = cast[ptr UncheckedArray[byte]](data)
   if format == PixelXrgb8888:
     for y in 0 ..< height:
-      for x in 0 ..< width:
-        var value: uint32
-        copyMem(addr value, addr source[y * pitch + x * 4], 4)
-        result.data[y * width + x] = rgbx(uint8((value shr 16) and 255),
-          uint8((value shr 8) and 255), uint8(value and 255), 255)
+      convertXrgbRow(addr source[y * pitch], addr result.data[y * width], width)
     return
   let greenBits = if format == PixelRgb565: 6 else: 5
   for y in 0 ..< height:
@@ -64,8 +62,9 @@ proc fitFrame*(source, previous: Image, width, height: int): Image =
   result = previous
   if result == nil or result.width != width or result.height != height:
     result = newImage(width, height)
-  result.fill(rgbx(0, 0, 0, 255))
-  if source == nil: return
+  if source == nil:
+    result.fill(rgbx(0, 0, 0, 255))
+    return
   let
     sourcePixels = cast[ptr UncheckedArray[ColorRGBX]](unsafeAddr source.data[0])
     targetPixels = cast[ptr UncheckedArray[ColorRGBX]](addr result.data[0])
@@ -77,6 +76,22 @@ proc fitFrame*(source, previous: Image, width, height: int): Image =
     startX = max(0, -left)
     endX = min(source.width, width - left)
     rowWidth = min(width, viewWidth)
+    border = rgbx(0, 0, 0, 255)
+    firstRow = max(0, top)
+    lastRow = min(height, top + source.height * scale)
+    firstColumn = max(0, left)
+    lastColumn = min(width, left + viewWidth)
+  # Only clear borders; the scaled image overwrites every interior pixel.
+  # Avoid writing the entire canvas twice while the core shares memory bandwidth.
+  if firstRow > 0:
+    result.data.toOpenArray(0, firstRow * width - 1).fill(border)
+  if lastRow < height:
+    result.data.toOpenArray(lastRow * width, result.data.high).fill(border)
+  for y in firstRow ..< lastRow:
+    if firstColumn > 0:
+      result.data.toOpenArray(y * width, y * width + firstColumn - 1).fill(border)
+    if lastColumn < width:
+      result.data.toOpenArray(y * width + lastColumn, (y + 1) * width - 1).fill(border)
   # The clipped rows and integer scale bound every offset to the image storage.
   {.push overflowChecks: off.}
   for sourceY in max(0, -top) ..< min(source.height, height - top):

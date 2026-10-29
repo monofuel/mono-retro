@@ -7,6 +7,16 @@ type
     CoreWork, VideoCopy, AudioCapture, AudioOutput, ScreenSplit, Scaling,
     Presentation, Events, Waiting, Saving
 
+const WalkFramesPerDirection = 30
+
+proc benchmarkButtons*(frame: uint64): uint16 =
+  ## Feed neutral input, or alternate right/left in explicit walking benchmark builds.
+  when defined(playerWalkBenchmark):
+    if (frame div WalkFramesPerDirection) mod 2 == 0: 1'u16 shl 7
+    else: 1'u16 shl 6
+  else:
+    0
+
 when defined(playerTimings):
   const NanosecondsPerMillisecond = 1_000_000
   var stageTicks: array[PlayerStage, int64]
@@ -19,6 +29,11 @@ template measured*(stage: PlayerStage, body: untyped) =
     stageTicks[stage] += getMonoTime().ticks - started
   else:
     body
+
+proc recordTiming*(stage: PlayerStage, ticks: int64) =
+  ## Record elapsed work performed outside the main thread.
+  when defined(playerTimings):
+    stageTicks[stage] += ticks
 
 proc resetTimings*() =
   ## Exclude initialization callbacks from the measured frame loop.

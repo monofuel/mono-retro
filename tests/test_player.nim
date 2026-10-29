@@ -61,6 +61,11 @@ block:
   doAssert fitFrame(source, canvas, 8, 5) == canvas
   doAssert canvas.data[1] == source.data[0]
   doAssert canvas.data[0] == rgbx(0, 0, 0, 255)
+  let narrow = newImage(1, 2)
+  narrow.fill(rgbx(56, 78, 90, 255))
+  canvas = fitFrame(narrow, canvas, 8, 5)
+  doAssert canvas[1, 1] == rgbx(0, 0, 0, 255)
+  doAssert canvas[3, 1] == narrow[0, 0]
   doAssert fitFrame(nil, canvas, 8, 5).isOneColor()
 
 block:

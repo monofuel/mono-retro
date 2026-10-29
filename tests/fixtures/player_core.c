@@ -129,7 +129,7 @@ size_t retro_get_memory_size(unsigned id)
 void retro_run(void)
 {
     /* Deliberate row padding detects incorrect packed-row assumptions. */
-    const uint32_t pixels[] = {0xff0000, 0x00ff00, 0x0000ff, 0xdeadbeef,
+    uint32_t pixels[] = {0xff0000, 0x00ff00, 0x0000ff, 0xdeadbeef,
                               0xffffff, 0x808080, 0x000000, 0xdeadbeef};
     int16_t samples[1600] = {100, -100, 200, -200};
     const size_t audio_frames = mode == 'T' || mode == 'N' || mode == 'E' ? 799 : 2;
@@ -162,6 +162,10 @@ void retro_run(void)
                 ds_pixels[y][x] = y < panel_height ? (x < 128 ? 0xff0000 : 0x00ff00) :
                     (x < 128 ? 0x0000ff : 0xffffff);
         video(ds_pixels, 256, panel_height * 2, sizeof(ds_pixels[0]));
+    } else if (mode == 'V') {
+        /* A new colour, a duplicate with an older recycled buffer, then new pixels. */
+        pixels[0] = frames == 1 ? 0xff0000 : (frames == 2 ? 0x00ff00 : 0x0000ff);
+        video(frames == 3 ? NULL : pixels, 3, 2, sizeof(uint32_t) * 4);
     } else {
         video(mode == 'H' ? RETRO_HW_FRAME_BUFFER_VALID : (mode == 'D' && frames > 1 ? NULL : pixels), 3, 2, sizeof(uint32_t) * 4);
     }

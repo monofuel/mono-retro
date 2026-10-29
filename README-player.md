@@ -86,7 +86,13 @@ mapping remains an application concern.
 
 Desktop emulation pauses while the window is unfocused or minimized. On resume the
 clock starts from the current time. Frames follow the core's reported rate
-(mGBA reports about 59.73 Hz), without burst catch-up. The software renderer
+(mGBA reports about 59.73 Hz), recovering up to two frames of timing debt before
+resetting after a longer stall. One dedicated thread owns the software core and
+its callbacks, including initialization, saves and state imports. It computes at
+most one frame ahead while the main thread handles input, audio and presentation.
+Frame buffers transfer ownership between threads; duplicate video callbacks retain
+the displayed image. This overlap avoids adding display work to the emulation
+thread's frame budget. The software renderer
 copies pitch-aware RGB565, XRGB8888 or 0RGB1555 frames, repeats duplicate frames,
 and scales by the largest whole-number factor that fits (1×, 2×, 3×, …), centered
 inside black borders. Pixels stay square; the core's display-aspect hint does not
@@ -318,16 +324,23 @@ output; `--copy-video` includes the frontend's normal video conversion but still
 opens no display or audio device. Initialization is excluded from the reported
 mean frame time. Always use a disposable save directory: SRAM is saved on exit.
 For finite full-player runs, add `--no-input` to feed neutral controls to the
-core while keeping exit shortcuts active. The headless benchmark always feeds
-neutral controls. This prevents physical input from changing the test workload.
+core while keeping exit shortcuts active. The headless benchmark also feeds
+neutral controls by default. This prevents physical input from changing the test workload.
+Standing still can hide rendering costs. For a moving EarthBound comparison,
+compile either program with `-d:playerWalkBenchmark`: it alternates right/left
+every 30 frames, ignores physical game input and requires a finite player run.
+Use the same imported state and disposable saves for each comparison. Short
+walking tests should remain within ten seconds; 480 frames take eight seconds
+at 60 FPS. Walking mode cannot be combined with `--no-input`.
 
 `make player-timings-rg-ds-plus` builds the full player with optional stage timers.
 It accepts the normal player arguments and reports exclusive milliseconds per
 emulated frame plus loop elapsed time on exit. `CoreWork` excludes the separately
 reported video/audio capture callbacks. Timers compile out of normal builds.
 
-The XRGB8888 conversion has its own constant-width loop, retaining padded and
-unaligned row support. Native dual-screen playback compares each panel with its
+The XRGB8888 conversion uses ARM64 NEON where available and a scalar loop elsewhere,
+retaining padded and unaligned row support. Scaling clears only black borders
+before overwriting the image interior, reducing memory traffic. Native dual-screen playback compares each panel with its
 last displayed pixels and retains unchanged scanout, avoiding redundant scaling
 and uploads. Changed pixels and resized outputs redraw. X11 continues presenting
 every frame so expose/focus/resize handling does not depend on retained scanout.

@@ -2,7 +2,7 @@ import
   std/[monotimes, os, parseopt, posix, strutils, times],
   paddy, pixie, windy,
   retro/[anbernic, display, libretro, playeraudio, playerclock, playerds, playerinput,
-    playerprofile, playervideo, settings]
+    playerprofile, playervideo, playerworker, settings]
 
 const
   SaveIntervalSeconds = 5
@@ -70,17 +70,20 @@ proc main() =
     raise newException(ValueError, Help)
   if noInput and limit == 0:
     raise newException(ValueError, "--no-input requires --frames")
+  when defined(playerWalkBenchmark):
+    if limit == 0: raise newException(ValueError, "Walking benchmark requires --frames")
+    if noInput: raise newException(ValueError, "Walking benchmark cannot use --no-input")
   let dual = selectDualScreen(dsLayout, earthboundDs)
   var settings = parseSettings(displayArguments, detectDevice())
   let desktop = settings.displayBackend() == "x11"
   validateDsDisplay(dual.layout, settings.displayBackend(), settings.outputs.len)
-  let session = openCore(corePath, romPath, saveDirectory, captureAudio = not muted,
+  let session = openCoreWorker(corePath, romPath, saveDirectory, captureAudio = not muted,
     options = dual.options, statePath = statePath)
   defer: session.close()
   if dual.layout != NoDsLayout:
     validateDsFrame(session.av.geometry.baseWidth.int, session.av.geometry.baseHeight.int,
       dual.panelWidth, dual.panelHeight)
-  settings.title = "mono-retro-player | " & $session.info.libraryName & " | " &
+  settings.title = "mono-retro-player | " & session.libraryName & " | " &
     romPath.extractFilename & (if muted: " | MUTED" else: "")
   let
     windowTitles = case (if desktop: dual.layout else: NoDsLayout)
@@ -111,7 +114,7 @@ proc main() =
   if not muted: sound = newPlayerAudio(session.av.timing.sampleRate)
   posix.signal(SIGINT, stopHandler)
   posix.signal(SIGTERM, stopHandler)
-  echo "Core: ", session.info.libraryName, " ", session.info.libraryVersion
+  echo "Core: ", session.libraryName, " ", session.libraryVersion
   echo "Save: ", session.savePath
   if statePath.len > 0: echo "State: ", statePath
   echo "Audio: ", (if muted: "muted" else: "Slappy"), "; core rate: ", session.av.timing.fps
@@ -146,7 +149,11 @@ proc main() =
       installStateDrop(screen.window(index))
   when defined(playerTimings):
     resetTimings()
+  when defined(playerTimings) or defined(playerWalkBenchmark):
     let loopStarted = getMonoTime()
+  # Prime the pipeline before its first presentation deadline.
+  session.prefetch(benchmarkButtons(0))
+  clock.advance(getMonoTime().ticks)
   while not stopping and not session.shutdown and (limit == 0 or session.frames < limit):
     try:
       measured(Events):
@@ -188,10 +195,10 @@ proc main() =
       measured(Saving): session.save()
       lastSave = now
     if (desktop and focusedIndex < 0) or size.x <= 0 or size.y <= 0:
-      if not paused and sound != nil: sound.reset()
+      if not paused:
+        session.pause()
+        if sound != nil: sound.reset()
       paused = true
-      session.buttons = 0
-      session.pointerInput = PointerInput()
       clock.reset(now.ticks)
       sleep(PollIntervalMs)
       continue
@@ -218,9 +225,18 @@ proc main() =
       let held = if desktop: inputScreen == 1 and window.buttonDown[MouseLeft]
         else: stylus.active
       pointerInput = companionGesture.companionPointer(pointerInput, held)
-    measured(CoreWork):
-      session.step(if noInput: 0'u16 else: buttons,
-        if noInput: PointerInput() else: pointerInput)
+    when defined(playerWalkBenchmark):
+      buttons = benchmarkButtons(session.frames)
+      pointerInput = PointerInput()
+    if noInput:
+      buttons = 0
+      pointerInput = PointerInput()
+    session.step(buttons, pointerInput)
+    # At most one core frame overlaps presentation. Controls are sampled again
+    # on each main-loop iteration; the core and all its callbacks stay serialized.
+    if not session.shutdown and (limit == 0 or session.frames < limit):
+      when defined(playerWalkBenchmark): buttons = benchmarkButtons(session.frames)
+      session.prefetch(buttons, pointerInput)
     if sound != nil:
       measured(AudioOutput): sound.submit(session.takeAudio(), session.av.timing.sampleRate)
     if dual.layout != NoDsLayout and session.image != nil:
@@ -258,13 +274,15 @@ proc main() =
       fps = session.av.timing.fps
       clock = newFrameClock(fps, getMonoTime().ticks)
     clock.advance(getMonoTime().ticks)
+  session.pause()
   echo "Frames: ", session.frames, "; video: ", session.videoFrames,
     "; audio frames: ", session.audioFrames
   if sound != nil:
     echo "Audio underruns: ", sound.underruns, "; overruns: ", sound.overruns
   printTimings(session.frames)
-  when defined(playerTimings):
+  when defined(playerTimings) or defined(playerWalkBenchmark):
     echo "Loop milliseconds: ", (getMonoTime() - loopStarted).inMilliseconds
+  when defined(playerTimings):
     echo "Unchanged native screens: ", reusedScreens
 
 when isMainModule:
