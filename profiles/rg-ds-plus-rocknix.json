@@ -5,8 +5,8 @@
   "display": "drm",
   "drmDevice": "/dev/dri/card0",
   "outputs": [
-    "DSI-1",
-    "DSI-2"
+    "DSI-2",
+    "DSI-1"
   ],
   "audioDevice": "mono_retro_ds_plus",
   "inputNames": [

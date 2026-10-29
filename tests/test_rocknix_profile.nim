@@ -3,7 +3,7 @@ import
   retro/[anbernic, gamepad, settings]
 
 let profile = parseSettings(@["--device:rg-ds-plus-rocknix"])
-doAssert profile.display == "drm" and profile.outputs == @["DSI-1", "DSI-2"]
+doAssert profile.display == "drm" and profile.outputs == @["DSI-2", "DSI-1"]
 doAssert profile.touchName == "Goodix Capacitive TouchScreen"
 doAssert profile.batterySupply == "battery"
 doAssert profile.sticks.len == 1 and profile.sticks[0].x == 0 and profile.sticks[0].y == 1
