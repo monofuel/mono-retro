@@ -4,6 +4,16 @@ A launcher, hardware tester and libretro player written in Nim for Linux
 handhelds and desktops. Developed on Gentoo with the Anbernic RG SP and
 RG DS Plus, with X11 support for desktop development and play.
 
+<table>
+  <tr><th>RG DS Plus menu</th><th>DS hardware tester</th></tr>
+  <tr>
+    <td><img src="docs/images/rg-ds-plus-menu.png" width="420" alt="RG DS Plus launcher with its menu above and touch controls below"></td>
+    <td><img src="docs/images/rg-ds-plus-hwtest.png" width="420" alt="DS hardware tester with colour bars and button indicators above the touchscreen test"></td>
+  </tr>
+</table>
+
+RG DS Plus layout previews, with both screens stacked in each image.
+
 - **Launcher:** open games and the hardware tester, view system and battery
   information, reboot or shut down.
 - **Player:** run libretro cores with integer scaling, audio, controller input,
