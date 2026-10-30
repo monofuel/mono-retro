@@ -292,6 +292,74 @@ proc testStateDrops(d: Display, directory: string) =
     doAssert readFile(saves / "drop.srm")[4] == char(123)
   delEnv("MONO_RETRO_FIXTURE_TRACE")
 
+proc testAchievementOverlay(d: Display, directory: string) =
+  ## Verify menu pausing, desktop rendering, pointer resume and input quarantine.
+  let
+    trace = directory / "overlay-trace"
+    rom = directory / "overlay.test"
+  writeFile(rom, "E")
+  putEnv("MONO_RETRO_FIXTURE_TRACE", trace)
+  putEnv("ALSOFT_DRIVERS", "null")
+  let process = startProcess(absolutePath("build/mono-retro-player"), args = [
+    "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
+    "--save-dir:" & directory / "overlay-saves", "--earthbound-ds",
+    "--achievements:off", "--mute"], options = {poParentStreams})
+  defer:
+    if process.running(): process.terminate()
+    discard process.waitForExit(5000)
+    process.close()
+    delEnv("MONO_RETRO_FIXTURE_TRACE")
+  let
+    top = findWindow(d, " | Game")
+    bottom = findWindow(d, " | Party")
+  d.XMoveWindow(top, 0, 0)
+  d.XMoveWindow(bottom, 550, 0)
+  d.XResizeWindow(bottom, 512, 384)
+  d.XSetInputFocus(bottom, rtRoot)
+  d.XSync(false)
+  waitFrames(trace, 4)
+  key(d, bottom, 0xffbe, true)
+  key(d, bottom, 0xffbe, false)
+  sleep(150)
+  let paused = frameCount(trace)
+  sleep(100)
+  doAssert frameCount(trace) == paused
+  let pixels = getImage(d, bottom, 0, 0, 512, 384, high(culong), 2)
+  doAssert pixels != nil
+  doAssert (getPixel(pixels, 0, 0) and 0xffffff) == 0x111923
+  discard destroyImage(pixels)
+  # Resume via the exact footer target, then hold Escape through dismissal.
+  mouse(d, bottom, 50, 344, 1)
+  sleep(40)
+  mouse(d, bottom, 50, 344, 0)
+  waitFrames(trace, paused + 3)
+  doAssert lastValue(trace, "pointer_pressed") == 0
+  key(d, bottom, 0xffbe, true)
+  key(d, bottom, 0xffbe, false)
+  sleep(100)
+  key(d, bottom, 0xff0d, true)
+  sleep(40)
+  key(d, bottom, 0xffbe, true)
+  key(d, bottom, 0xffbe, false)
+  waitFrames(trace, frameCount(trace) + 3)
+  doAssert lastValue(trace, "input") == 0, "Held menu Enter leaked Start into the game"
+  key(d, bottom, 0xff0d, false)
+  waitFrames(trace, frameCount(trace) + 2)
+  key(d, bottom, 0xff0d, true)
+  waitFrames(trace, frameCount(trace) + 3)
+  doAssert lastValue(trace, "input") == 8, "Released controls did not rearm game input"
+  key(d, bottom, 0xff0d, false)
+  key(d, bottom, 0xffbe, true)
+  key(d, bottom, 0xffbe, false)
+  sleep(100)
+  key(d, bottom, 0xff1b, true)
+  waitFrames(trace, frameCount(trace) + 3)
+  doAssert process.running()
+  doAssert lastValue(trace, "pointer_pressed") == 0
+  key(d, bottom, 0xff1b, false)
+  closeWindow(d, top)
+  doAssert process.waitForExit(5000) == 0
+
 proc main() =
   ## Check presentation, input, pausing and shutdown on isolated Xvfb.
   let
@@ -387,6 +455,7 @@ proc main() =
         (if mode == 3 and cpuEndian == littleEndian: "1" else: "0") & "\n")
   testDs(d, directory)
   testStateDrops(d, directory)
+  testAchievementOverlay(d, directory)
   if paramCount() == 3:
     putEnv("ALSOFT_DRIVERS", "null")
     let seed = readFile(paramStr(3))
@@ -396,7 +465,7 @@ proc main() =
       copyFile(paramStr(3), saves / paramStr(2).splitFile.name & ".srm")
       let process = startProcess(absolutePath("build/mono-retro-player"), args = [
         "--core:" & absolutePath(paramStr(1)), "--rom:" & absolutePath(paramStr(2)),
-        "--save-dir:" & saves, "--ds-layout:" & layout, "--frames:180"],
+        "--save-dir:" & saves, "--ds-layout:" & layout, "--frames:180", "--achievements:off"],
         options = {poParentStreams})
       defer:
         if process.running(): process.terminate()
@@ -416,7 +485,7 @@ proc main() =
       let saves = directory / (if dual == 1: "earthbound-ds" else: "single")
       var arguments = @[
         "--core:" & absolutePath(paramStr(1)), "--rom:" & absolutePath(paramStr(2)),
-        "--save-dir:" & saves, "--frames:180"]
+        "--save-dir:" & saves, "--frames:180", "--achievements:off"]
       if dual == 1: arguments.add("--earthbound-ds")
       if paramCount() == 4: arguments.add("--load-state:" & absolutePath(paramStr(4)))
       let process = startProcess(absolutePath("build/mono-retro-player"), args = arguments,

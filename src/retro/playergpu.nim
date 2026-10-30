@@ -16,6 +16,8 @@ type
     presented: bool
     sequence: uint64
     active: int
+    composition: bool
+    crops: PlayerCrops
 
 proc parseVideoMode*(value: string): PlayerVideoMode =
   ## Select automatic native GPU use or an explicit comparison path.
@@ -79,7 +81,8 @@ proc present*(gpu: PlayerGpu, image: Image, sequence: uint64, active: int,
     separate: bool, panelWidth, panelHeight: int, changed = true) =
   ## Upload one owned core frame, retaining scanout for duplicate callbacks.
   if gpu == nil or image == nil: return
-  if gpu.presented and gpu.active == active and (gpu.sequence == sequence or not changed):
+  if gpu.presented and not gpu.composition and gpu.active == active and
+      (gpu.sequence == sequence or not changed):
     gpu.sequence = sequence
     return
   when HasDrm:
@@ -91,3 +94,28 @@ proc present*(gpu: PlayerGpu, image: Image, sequence: uint64, active: int,
     gpu.presented = true
     gpu.sequence = sequence
     gpu.active = active
+    gpu.composition = false
+
+proc presentComposition*(gpu: PlayerGpu, image: Image, crops: PlayerCrops,
+    revision: uint64, changed = true) =
+  ## Present app-owned UI crops without changing the paired GPU display backend.
+  if gpu == nil or image == nil: return
+  for crop in crops:
+    if crop.x < 0 or crop.y < 0 or crop.width < 0 or crop.height < 0 or
+        (crop.width == 0) != (crop.height == 0) or crop.x > image.width or
+        crop.y > image.height or crop.width > image.width - crop.x or
+        crop.height > image.height - crop.y:
+      raise newException(ValueError, "Invalid GPU composition crop")
+  if gpu.presented and gpu.composition and gpu.crops == crops and
+      (gpu.sequence == revision or not changed):
+    gpu.sequence = revision
+    return
+  when HasDrm:
+    var regions: array[2, PixelRegion]
+    for index, crop in crops:
+      regions[index] = PixelRegion(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
+    gpu.pair.presentPixels(image, regions)
+    gpu.presented = true
+    gpu.composition = true
+    gpu.sequence = revision
+    gpu.crops = crops

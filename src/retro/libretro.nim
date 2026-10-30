@@ -1,7 +1,7 @@
 import
   std/[dynlib, math, os, strutils, tables],
   pixie,
-  ./[playerformats, playerprofile, playervideo, playersave]
+  ./[playerformats, playerprofile, playervideo, playersave, ra_types]
 
 const
   HeaderDirectory = currentSourcePath.parentDir / "../../third_party"
@@ -10,6 +10,7 @@ const
   JoypadMask = 256'u32
   PointerDevice = 6'u32
   SaveRam = 0'u32
+  SystemRam = 2'u32
   MaxSaveBytes = 64 * 1024 * 1024
   Experimental = 0x10000'u32
   GetCanDupe = 3'u32
@@ -27,6 +28,7 @@ const
   SetSystemAvInfo = 32'u32
   SetControllerInfo = 35'u32
   SetGeometry = 37'u32
+  SetSupportAchievements = 42'u32 or Experimental
   GetAudioVideoEnable = 47'u32 or Experimental
   GetInputBitmasks = 51'u32 or Experimental
   GetCoreOptionsVersion = 52'u32
@@ -77,7 +79,8 @@ type
   CoreSession* = ref object
     library: LibHandle
     initialized, loaded, ready: bool
-    romPath, romData, systemDirectory, saveDirectory: string
+    romPath, romData, achievementRomData, systemDirectory, saveDirectory: string
+    achievementSupport: bool
     saved: string
     variables: Table[string, string]
     options: seq[CoreOption]
@@ -116,6 +119,37 @@ proc check*(session: CoreSession) =
   ## Surface callback errors only after control has returned across the C ABI.
   if session.failure.len > 0: raise newException(IOError, session.failure)
 
+proc ownedString(value: string): string =
+  ## Copy bytes without sharing the buffer supplied to a core or another thread.
+  result = newString(value.len)
+  if value.len > 0: copyMem(addr result[0], unsafeAddr value[0], value.len)
+
+proc supportsAchievements*(session: CoreSession): bool =
+  ## Limit achievement memory access to an explicitly capable Decompbound core.
+  session != nil and session.loaded and session.achievementSupport and
+    session.info.libraryName != nil and $session.info.libraryName == "Decompbound"
+
+proc originalRomPath*(session: CoreSession): string =
+  ## Return an owned copy of the original content path for worker-local hashing.
+  ownedString(session.romPath)
+
+proc originalRomData*(session: CoreSession): string =
+  ## Return immutable source bytes independently of the buffer passed to the core.
+  ownedString(session.achievementRomData)
+
+proc achievementMemoryProvider*(session: CoreSession): RaMemoryProvider =
+  ## Borrow RAM only on the core owner thread while the loaded session is alive.
+  result = proc(id: uint32): RaMemoryInfo =
+    ## Resolve current system or save RAM after imports may replace their storage.
+    if not session.supportsAchievements() or id notin [SaveRam, SystemRam]: return
+    let size = session.memorySize(id.cuint)
+    if size == 0: return
+    if size > MaxSaveBytes.csize_t:
+      raise newException(IOError, "Core achievement memory exceeds supported size")
+    let data = session.memoryData(id.cuint)
+    if data == nil: raise newException(IOError, "Core returned missing achievement memory")
+    result = RaMemoryInfo(data: data, size: size.int)
+
 proc validate*(av: AvInfo) =
   ## Reject dimensions and rates that cannot describe a software game frame.
   if av.geometry.baseWidth == 0 or av.geometry.baseHeight == 0 or
@@ -143,6 +177,10 @@ proc environment(command: cuint, data: pointer): bool {.cdecl.} =
       if data != nil: cast[ptr bool](data)[] = true; return true
     of SetPerformanceLevel, SetInputDescriptors, SetSupportNoGame, SetControllerInfo:
       return true
+    of SetSupportAchievements:
+      if data != nil:
+        active.achievementSupport = cast[ptr bool](data)[]
+        return true
     of GetSystemDirectory, GetSaveDirectory:
       if data != nil:
         cast[ptr cstring](data)[] = if command == GetSystemDirectory: active.systemDirectory.cstring
@@ -398,6 +436,9 @@ proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false,
     session.check()
     session.getInfo(addr session.info)
     if not session.info.needFullpath: session.romData = readFile(session.romPath)
+    if session.info.libraryName != nil and $session.info.libraryName == "Decompbound":
+      session.achievementRomData = if session.info.needFullpath: readFile(session.romPath)
+        else: ownedString(session.romData)
     var game = GameInfo(path: session.romPath.cstring)
     if not session.info.needFullpath:
       game.size = csize_t(session.romData.len)

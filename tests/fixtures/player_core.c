@@ -11,7 +11,12 @@ static retro_audio_sample_t audio;
 static retro_audio_sample_batch_t batch;
 static retro_input_poll_t poll_input;
 static retro_input_state_t input;
+#ifdef RA_FIXTURE
+static unsigned char memory[8192];
+static unsigned char system_memory[131072];
+#else
 static unsigned char memory[16];
+#endif
 static unsigned frames;
 static char mode;
 static bool xbgr;
@@ -41,6 +46,11 @@ void retro_init(void)
 {
     memset(memory, 0xff, sizeof(memory));
     frames = 0;
+#ifdef RA_FIXTURE
+    memset(system_memory, 0, sizeof(system_memory));
+    bool achievements = true;
+    environment(42u | 0x10000u, &achievements);
+#endif
     xbgr = false;
     trace("init", 1);
     struct retro_variable variables[] = {
@@ -71,7 +81,13 @@ void retro_init(void)
 void retro_deinit(void) { trace("deinit", 1); }
 void retro_get_system_info(struct retro_system_info *info)
 {
-    *info = (struct retro_system_info){"Player fixture", "1", "test",
+    *info = (struct retro_system_info){
+#ifdef RA_FIXTURE
+        "Decompbound",
+#else
+        "Player fixture",
+#endif
+        "1", "test",
 #ifdef FULLPATH
         true,
 #else
@@ -99,6 +115,10 @@ bool retro_load_game(const struct retro_game_info *game)
 #else
     if (!game->data || !game->size || !game->path) abort();
     mode = *(const char *)game->data;
+#ifdef RA_FIXTURE
+    /* A deliberately hostile fixture proves hashing never borrows core input. */
+    ((unsigned char *)game->data)[game->size - 1] ^= 0xff;
+#endif
 #endif
     if (mode == 'F') return false;
     if (mode == 'E') {
@@ -145,14 +165,25 @@ bool retro_unserialize(const void *data, size_t size)
     const char expected[] = "fixture-state";
     if (!data || size != sizeof(expected) - 1 || memcmp(data, expected, size)) return false;
     frames = 0;
+#ifdef RA_FIXTURE
+    memset(system_memory, 0, sizeof(system_memory));
+#endif
     memory[4] = 42;
     trace("state_loaded", 42);
     return true;
 }
 #endif
-void *retro_get_memory_data(unsigned id) { return id == RETRO_MEMORY_SAVE_RAM ? memory : NULL; }
+void *retro_get_memory_data(unsigned id) {
+#ifdef RA_FIXTURE
+    if (id == RETRO_MEMORY_SYSTEM_RAM) return system_memory;
+#endif
+    return id == RETRO_MEMORY_SAVE_RAM ? memory : NULL;
+}
 size_t retro_get_memory_size(unsigned id)
 {
+#ifdef RA_FIXTURE
+    if (id == RETRO_MEMORY_SYSTEM_RAM) return sizeof(system_memory);
+#endif
     return id == RETRO_MEMORY_SAVE_RAM ? (mode == 'S' && frames ? 8 : sizeof(memory)) : 0;
 }
 #ifndef OMIT_RUN
@@ -178,6 +209,9 @@ void retro_run(void)
     memory[1] = mask >> 8;
     memory[4] = 123;
     frames++;
+#ifdef RA_FIXTURE
+    system_memory[0] = frames;
+#endif
     if (mode == 'R' && frames == 2) {
         struct retro_system_av_info info;
         retro_get_system_av_info(&info);

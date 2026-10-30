@@ -9,6 +9,9 @@ monobake and monorig.
 melonDS DS with native dual-screen touch on the RG DS Plus.
 See [building, controls and save handling](README-player.md).
 
+RetroAchievements support adds Casual achievements for Decompbound, unlock popups
+and a paused achievement browser. See [setup and controls](docs/retroachievements.md).
+
 ## Launcher
 
 `mono-retro` has Hardware Test, System Info, Reboot, Shut Down and Decompbound entries. It uses Windy,
@@ -76,7 +79,7 @@ For checked developer builds with stack traces, use `-d:debug`, for example
 Tests are checked by default; `-d:danger` explicitly tests shipping behavior.
 Explicit input validation and normal exceptions remain enabled in both profiles.
 
-Requires Nim 2.x, a C compiler, Linux development headers, libudev, libevdev
+Requires Nim 2.x, a C compiler, Linux development headers, OpenSSL, libudev, libevdev
 and make. The sibling Paddy checkout's `anbernic-handhelds` branch supplies the
 automatic mdev discovery support. Register both checkouts in the parent Nimby workspace:
 

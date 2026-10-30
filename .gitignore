@@ -1,3 +1,5 @@
 /build/
 /tests/test_hardware
 /src/hwtest
+.mono-retro-ra.json
+.mono-retro-ra-*.tmp

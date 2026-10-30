@@ -1,19 +1,29 @@
 import
   std/monotimes,
   pixie,
-  ./[libretro, playerprofile]
+  ./[libretro, playerprofile, ra_client, ra_types]
+
+when defined(raTesting):
+  import ./ra_http
+
+  type WorkerRaHttpTestHandler* = proc(request: RaHttpRequest): RaHttpResponse {.nimcall.}
+
+  var workerRaHttpTestHandler: WorkerRaHttpTestHandler
 
 type
   CommandKind = enum
-    Configure, Step, Save, ImportState, Stop
+    Configure, Step, Save, ImportState, IdleAchievements, Stop
   Command = object
     kind: CommandKind
     core, rom, saves, state, contents, source: string
+    raConfigPath: string
     options: seq[CoreOption]
-    captureAudio: bool
+    captureAudio, achievementsEnabled, withList: bool
     buttons: uint16
     pointerInput: PointerInput
     reusable: Image
+    when defined(raTesting):
+      raHttpTestHandler: WorkerRaHttpTestHandler
   Reply = object
     error: string
     libraryName, libraryVersion, savePath: string
@@ -23,6 +33,9 @@ type
     frames, videoFrames, audioFrames: uint64
     shutdown: bool
     coreTicks: int64
+    raPresent: bool
+    raSnapshot: RaSnapshot
+    raNotices: seq[RaNotice]
   Mailbox = object
     commands: Channel[Command]
     replies: Channel[Reply]
@@ -39,27 +52,64 @@ type
     frames*, videoFrames*, audioFrames*: uint64
     shutdown*: bool
     imageChanged*: bool ## Fresh image; exact change detection is opt-in.
+    raSnapshot*: RaSnapshot
+    raNotices: seq[RaNotice]
 
 proc owned(value: string): string =
   ## Copy a string before transferring ownership to another thread.
   result = newString(value.len)
   if value.len > 0: copyMem(addr result[0], unsafeAddr value[0], value.len)
 
+when defined(raTesting):
+  proc setWorkerRaHttpTestHandler*(handler: WorkerRaHttpTestHandler) =
+    ## Select a stateless synthetic transport to install on the next core owner thread.
+    workerRaHttpTestHandler = handler
+
+proc captureAchievements(reply: var Reply, runtime: RaRuntime, withList = false) =
+  ## Publish owned achievement values without transferring any SDK or RAM pointers.
+  reply.raPresent = true
+  reply.raSnapshot = ownedSnapshot(runtime.snapshot(withList))
+  for notice in runtime.takeNotices():
+    reply.raNotices.add(RaNotice(title: owned(notice.title),
+      description: owned(notice.description), points: notice.points))
+
+proc closeOwned(runtime: var RaRuntime, session: CoreSession) =
+  ## Settle achievement callbacks before unloading the memory they can inspect.
+  try:
+    runtime.close()
+  finally:
+    runtime = nil
+    session.close()
+
 proc emulate(mailbox: ptr Mailbox) {.thread.} =
   ## Own all core calls and callbacks on one thread; transfer unique frame buffers.
   # Libretro uses process-global callbacks. Only this thread accesses its session.
   {.cast(gcsafe).}:
-    var session: CoreSession
+    var
+      session: CoreSession
+      runtime: RaRuntime
     try:
       let config = mailbox.commands.recv()
+      when defined(raTesting):
+        setRaHttpTestHandler(config.raHttpTestHandler)
       session = openCore(config.core, config.rom, config.saves,
         captureAudio = config.captureAudio, options = config.options,
         statePath = config.state)
-      mailbox.replies.send(Reply(libraryName: $session.info.libraryName,
+      runtime = newRaRuntime(config.raConfigPath, config.achievementsEnabled,
+        session.supportsAchievements(), session.originalRomPath(), session.originalRomData(),
+        session.achievementMemoryProvider())
+      var reply = Reply(libraryName: $session.info.libraryName,
         libraryVersion: $session.info.libraryVersion, savePath: owned(session.savePath),
-        av: session.av))
+        av: session.av)
+      reply.captureAchievements(runtime)
+      mailbox.replies.send(move(reply))
     except CatchableError as error:
-      mailbox.replies.send(Reply(error: "Core worker: " & error.msg & "\n" & error.getStackTrace()))
+      var message = "Core worker: " & error.msg & "\n" & error.getStackTrace()
+      try:
+        closeOwned(runtime, session)
+      except CatchableError as cleanupError:
+        message.add("\nCore cleanup: " & cleanupError.msg)
+      mailbox.replies.send(Reply(error: message))
       return
     while true:
       var
@@ -73,6 +123,7 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
             previousVideoFrames = session.videoFrames
             started = getMonoTime().ticks
           session.step(command.buttons, command.pointerInput)
+          runtime.frame()
           reply.coreTicks = getMonoTime().ticks - started
           reply.av = session.av
           reply.frames = session.frames
@@ -86,9 +137,14 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
         of Save: session.save()
         of ImportState:
           session.importStateData(command.contents, command.source)
+          runtime.resetProgress()
+          runtime.refreshMemory()
           reply.av = session.av
-        of Stop: session.close()
+        of IdleAchievements: runtime.idle()
+        of Stop: closeOwned(runtime, session)
         of Configure: raise newException(ValueError, "Core already configured")
+        if command.kind != Stop:
+          reply.captureAchievements(runtime, command.withList)
       except CatchableError as error:
         reply.error = "Core worker: " & error.msg & "\n" & error.getStackTrace()
       mailbox.replies.send(move(reply))
@@ -98,10 +154,20 @@ proc checked(reply: Reply) =
   ## Propagate core errors with the originating worker's stack trace.
   if reply.error.len > 0: raise newException(IOError, reply.error)
 
+proc acceptAchievements(worker: CoreWorker, reply: var Reply) =
+  ## Surface prefetched achievement events once while retaining its frame and audio.
+  if reply.raPresent:
+    worker.raSnapshot = move(reply.raSnapshot)
+    reply.raPresent = false
+  for notice in reply.raNotices.mitems:
+    worker.raNotices.add(move(notice))
+  reply.raNotices.setLen(0)
+
 proc finishPending(worker: CoreWorker) =
   ## Retain an in-flight frame before issuing a serialized control operation.
   if worker.pending:
     worker.reply = worker.mailbox.replies.recv()
+    worker.acceptAchievements(worker.reply)
     worker.pending = false
     worker.ready = true
 
@@ -110,6 +176,7 @@ proc request(worker: CoreWorker, command: Command): Reply =
   worker.finishPending()
   worker.mailbox.commands.send(command)
   result = worker.mailbox.replies.recv()
+  worker.acceptAchievements(result)
   result.checked()
 
 proc close*(worker: CoreWorker) =
@@ -133,17 +200,21 @@ proc close*(worker: CoreWorker) =
   reply.checked()
 
 proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = false,
-    options: seq[CoreOption] = @[], statePath = ""): CoreWorker =
+    options: seq[CoreOption] = @[], statePath = "", raConfigPath = "",
+    achievementsEnabled = false): CoreWorker =
   ## Load a software core on its dedicated thread with one bounded frame in flight.
   result = CoreWorker(mailbox: cast[ptr Mailbox](allocShared0(sizeof(Mailbox))))
   result.mailbox.commands.open(1)
   result.mailbox.replies.open(1)
   createThread(result.thread, emulate, result.mailbox)
   var config = Command(kind: Configure, core: owned(corePath), rom: owned(romPath),
-    saves: owned(saveDirectory), state: owned(statePath), captureAudio: captureAudio)
+    saves: owned(saveDirectory), state: owned(statePath), captureAudio: captureAudio,
+    raConfigPath: owned(raConfigPath), achievementsEnabled: achievementsEnabled)
+  when defined(raTesting):
+    config.raHttpTestHandler = workerRaHttpTestHandler
   for option in options: config.options.add((owned(option.key), owned(option.value)))
   result.mailbox.commands.send(move(config))
-  let reply = result.mailbox.replies.recv()
+  var reply = result.mailbox.replies.recv()
   if reply.error.len > 0:
     joinThread(result.thread)
     result.mailbox.commands.close()
@@ -155,6 +226,7 @@ proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = fa
   result.libraryVersion = reply.libraryVersion
   result.savePath = reply.savePath
   result.av = reply.av
+  result.acceptAchievements(reply)
 
 proc prefetch*(worker: CoreWorker, buttons: uint16, pointerInput = PointerInput()) =
   ## Start the next frame while the main thread presents the current one.
@@ -190,6 +262,14 @@ proc step*(worker: CoreWorker, buttons: uint16, pointerInput = PointerInput(),
 proc takeAudio*(worker: CoreWorker): seq[int16] =
   ## Transfer the last completed frame's PCM to the audio owner.
   result = move(worker.audio)
+
+proc takeRaNotices*(worker: CoreWorker): seq[RaNotice] =
+  ## Transfer achievement notifications accumulated from frames and paused updates.
+  result = move(worker.raNotices)
+
+proc idleAchievements*(worker: CoreWorker, withList = false) =
+  ## Process achievement callbacks on the core thread without advancing emulation.
+  discard worker.request(Command(kind: IdleAchievements, withList: withList))
 
 proc save*(worker: CoreWorker) =
   ## Persist SRAM on the core thread without discarding a prefetched frame.

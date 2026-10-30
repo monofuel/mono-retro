@@ -14,7 +14,7 @@ uses Windy's `monofuel/drm-gpu-player` fork, including the X11 wheel fix. Point
 the Nimby workspace at that checkout; for a separate worktree, set
 `MONO_RETRO_WINDY=/path/to/windy-checkout`. The project configuration applies that
 override to builds and checks. Native Linux dependencies are
-libudev, libevdev, libX11, libXcursor and OpenAL Soft, plus a C compiler for the
+libudev, libevdev, libX11, libXcursor, OpenAL Soft and OpenSSL, plus a C compiler for the
 ABI bridge. Install Slappy ≥0.4.0 and its dependencies through Nimby in the
 existing parent workspace, preserving the Windy/Paddy branches.
 
@@ -78,6 +78,11 @@ hotkeys, and cores with no state support still work normally without this option
 | A / S | L / R |
 | Enter / Backspace | Start / Select |
 | Escape | Save and exit |
+| F1 / controller Menu or Home | Pause and browse achievements |
+
+The achievement browser consumes Escape/B to return. See
+[RetroAchievements setup](docs/retroachievements.md) for the login helper and
+Casual-mode support in Decompbound.
 
 The first connected Paddy controller (lowest device ID) maps physical RetroPad
 positions: east is A, south is B, north is X and west is Y; shoulders are L/R.
@@ -219,7 +224,7 @@ Hold Select+Start for two seconds to save and return to the launcher.
 `make player-rg-ds-plus` cross-builds `build/mono-retro-player-rg-ds-plus` using
 the existing ARM64 compiler configuration and target libraries in
 `build/arm64-libs/`. It includes the DRM backend and needs target libudev,
-libevdev, libdrm and ALSA-enabled OpenAL Soft. No X11 libraries are required.
+libevdev, libdrm, OpenSSL and ALSA-enabled OpenAL Soft. No X11 libraries are required.
 The cross-link directory must also contain OpenAL's target C++ runtime and its
 matching libc/libm dependencies; the linker uses it for transitive dependencies
 without embedding device-library paths into the executable.

@@ -21,6 +21,7 @@ let windySource = getEnv("MONO_RETRO_WINDY")
 if windySource.len > 0:
   switch("path", windySource / "src")
 switch("define", "useCpu")
+switch("define", "ssl")
 switch("define", "windyBackends=" & getEnv("MONO_RETRO_BACKENDS", "x11"))
 if getEnv("MONO_RETRO_TARGET") == "arm64":
   switch("cpu", "arm64")

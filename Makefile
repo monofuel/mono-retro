@@ -5,6 +5,7 @@ check:
 	nim check src/hwtest.nim
 	nim check src/launcher.nim
 	nim check src/player.nim
+	nim check src/ra_auth.nim
 	nim check tests/test_hardware.nim
 	nim check tests/test_gamepad.nim
 	nim check tests/test_audio_stream.nim
@@ -97,6 +98,7 @@ player-fixtures:
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC tests/fixtures/player_core.c -o build/player-fixture.so
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC -DFULLPATH tests/fixtures/player_core.c -o build/player-fullpath.so
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC -DOMIT_RUN tests/fixtures/player_core.c -o build/player-missing.so
+	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC -DRA_FIXTURE tests/fixtures/player_core.c -o build/player-ra-fixture.so
 test-player: player-fixtures prepare-lost-in-blue-tool
 	nim r -o:build/test-player tests/test_player.nim
 	nim r -o:build/test-playercore tests/test_playercore.nim
@@ -107,9 +109,23 @@ test-player: player-fixtures prepare-lost-in-blue-tool
 	nim r -o:build/test-playergpu tests/test_playergpu.nim
 	nim r -o:build/test-playerpixels tests/test_playerpixels.nim
 	nim r -o:build/test-playerxbgr tests/test_playerxbgr.nim
+	$(MAKE) test-achievements
 	nim r -o:build/test-prepare-lost-in-blue tests/test_prepare_lost_in_blue.nim
 test-player-x11: player-desktop player-fixtures
 	nim r -o:build/integration-player-x11 tests/integration_player_x11.nim
+
+.PHONY: ra-cli ra-cli-arm64 test-achievements
+ra-cli:
+	mkdir -p build
+	nim c -o:build/mono-retro-ra src/ra_auth.nim
+ra-cli-arm64:
+	mkdir -p build
+	MONO_RETRO_TARGET=arm64 nim c -o:build/mono-retro-ra-arm64 src/ra_auth.nim
+test-achievements: player-fixtures
+	nim r -o:build/test-ra-config tests/test_ra_config.nim
+	nim r -d:raTesting -o:build/test-ra-client tests/test_ra_client.nim
+	nim r -d:raTesting -o:build/test-ra-worker tests/test_ra_worker.nim
+	nim r -o:build/test-playeroverlay tests/test_playeroverlay.nim
 
 DS_LAYOUT ?= combined
 LOST_IN_BLUE_SOURCE ?= $(HOME)/Documents/Arcade/cartridge-dumps/DS/Lost in Blue
