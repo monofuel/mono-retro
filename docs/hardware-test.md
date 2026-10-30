@@ -1,0 +1,143 @@
+# Hardware test
+
+Build with `make desktop` after the [Nimby setup](../README.md#build).
+See [Windy backends and cross builds](../README-windy.md) for handheld targets.
+Previews render without a display or physical device:
+
+```sh
+build/hwtest-desktop --device:rg-sp --preview:build/sp-preview.ppm
+build/hwtest-desktop --device:rg-ds-plus --preview:build/ds-preview.ppm
+```
+
+The DS preview also writes `ds-preview-touch.ppm`. ALSA tone playback requires
+`libasound.so.2`, loaded when requested. DRM displays require `libdrm.so.2`.
+`make test-audio` checks streaming using ALSA's silent null/file plugins.
+
+## Device selection
+
+The app automatically selects a built-in profile for the RG SP or RG DS Plus.
+Detection combines board compatibility strings, input names and display
+geometry/connectors rather than identifying every H700 or RK3568 board as an
+Anbernic. Unknown hardware uses generic settings. Profiles remain available
+for explicit overrides:
+
+```sh
+sudo build/hwtest info
+sudo build/hwtest test --seconds:900
+sudo build/hwtest test --profile:profiles/rg-ds-plus.json --seconds:900
+```
+
+On a configured handheld, use `sudo mono-retro-hwtest test --seconds:900`.
+`--device:rg-sp`, `--device:rg-ds-plus` or `--device:generic` override detection.
+An explicit JSON profile overrides the selected built-in profile; CLI options
+then override both.
+
+## Screens and controls
+
+Both devices show colour bars, a grayscale ramp, an edge border, a moving
+refresh marker and input indicators. Cyan means held; green means tested.
+Each D-pad direction has its own tested state. Input names rather than event
+numbers identify mapped controls. Generic profiles display raw Linux codes;
+those labels do not imply a physical button layout.
+
+RG SP uses `/dev/fb0` through the existing packed truecolor framebuffer path
+(16-, 24- and 32-bit pixel formats). Its 17-button profile comes from physical
+calibration.
+
+RG DS Plus uses Windy's native DRM/KMS backend with CPU-drawn scanout buffers,
+preferring a Pixie-compatible pixel format advertised by the primary plane.
+It does not require a GPU renderer. Both screens are 1024x768. The stock-kernel
+profile uses DSI-1 above DSI-2; the ROCKNIX profile reverses that connector order.
+The top shows buttons and the single left stick. Back
+and Menu are distinct inputs. The bottom shows touch coordinates, finger IDs,
+a trail and nine targets which turn green when touched. X clears the trail.
+Touch samples commit at evdev report boundaries; multitouch contacts are
+tracked independently. The kernel advertises extra controller axes/buttons
+which need not correspond to physical controls.
+
+Gamepad testing defaults to Paddy. All mapped gamepad badges, the Start tone,
+X touch-clear action and Select+Start exit combo use Paddy's snapshots and
+edges. The display reports the number of connected Paddy controllers; missing
+controllers do not silently fall back to raw gamepad input. Back and volume
+remain raw evdev inputs, marked `RAW`, and displayed touch contacts come through Windy's evdev backend.
+
+Anbernic mappings belong to this app, in `src/retro/anbernic.nim`. It translates
+Paddy's generic snapshots using its public `Gamepad` fields and accessors;
+Paddy itself contains no Anbernic profiles. Other controllers pass through
+unchanged. This app's mapped A/B/X/Y follow Xbox positions, while badges show
+the handheld's printed legends: B is mapped A, A is mapped B, Y is mapped X and
+X is mapped Y. App-mapped changes use an `APP` log prefix, Paddy connections
+use `PADDY`, and kernel events use `RAW`.
+
+The DS Plus stick shows a white app-mapped marker and a cyan raw evdev marker,
+with both sets of coordinates. Paddy retains its normal 10% axis cutoff;
+the app maps positive Y to point up. Raw coordinates are scaled linearly and clamped
+only at the panel edges, without an application deadzone or smoothing.
+Controller firmware or kernel-driver filtering can still affect both.
+
+Use `--gamepad:raw` for the original raw test, including raw gamepad badges,
+tone and exit actions. Calibration always reads raw evdev events.
+
+The test polls input every 8 ms and redraws on an 80 ms timer, writing its scanout buffer directly;
+it is a functional hardware test, not a vblank-paced latency benchmark.
+
+## Sound and exit
+
+Sound plays only on a fresh Start press in test mode. Holding Start does not
+repeat it. The quiet, faded test is 440 Hz on the left, then 660 Hz on the right.
+A mono speaker mixes those channels. After the first press, a worker keeps the
+PCM open and writes silence between tones, avoiding repeated codec power
+transitions. Hold Select+Start for two seconds to exit, or interrupt via SSH
+with Ctrl+C. Tests also stop after the selected duration. The explicit `audio`
+command plays one tone immediately for manual diagnostics.
+
+With the stock kernels, monorig installs named ALSA PCMs which temporarily
+enable speaker routing and restore mixer controls when playback closes,
+without replacing the system's default PCM. RG SP uses `mono_retro_test` on `audiocodec`; DS Plus uses
+`mono_retro_ds_plus` on `rockchipaw883xx`. DS Plus also requires the stock
+`aw883xx_acf.bin` speaker firmware before boot, installed by monobake from the
+verified stock backup. If adding it to an already booted system, reboot;
+the stock amplifier driver has an unsafe runtime unbind/rebind path.
+
+The app observes input without an exclusive grab and does not handle power or
+lid actions. Other software can still react to the same buttons. Do not run
+multiple display tests at once. `info` queries display geometry without
+changing scanout.
+
+On normal exit, SIGINT and SIGTERM, fbdev memory/offsets are restored. DRM
+restores retained original framebuffers and connector routes; if the vendor
+kernel retired its boot-logo framebuffer, the test output is disabled instead.
+Returning to the boot splash is not guaranteed. SIGKILL/power loss cannot run
+cleanup.
+
+## Profiles and calibration
+
+Profiles use JSON: `title`, `display` (`auto`, `x11`, `fbdev`, `drm`), `framebuffer`,
+`drmDevice`, ordered `outputs`, `inputNames`, `audioDevice`, `rotation`,
+`toneKey`, `bindings`, `sticks`, `touchName` and `touchRotation`.
+Rotations accept 0/90/180/270. Stick entries contain `label`, `device`, `x`
+and `y` (evdev absolute-axis codes). Bindings contain a physical label, input
+device name, Linux event kind/code and direction.
+
+`--fb`, repeatable `--input`, `--pcm`, `--rotate`, `--display`, `--drm`,
+repeatable `--output` and `--touch-rotate` override profile settings. The first
+output override replaces the profile's output list. For another panel order:
+
+```sh
+sudo build/hwtest test --device:rg-ds-plus --output:DSI-2 --output:DSI-1
+```
+
+To build a physical button mapping, start with a profile selecting the
+appropriate input names:
+
+```sh
+sudo build/hwtest calibrate --profile:profiles/device.json --save-profile:/tmp/device-mapped.json
+```
+
+Press and release the named controls: D-pad, A/B/X/Y, L/R, Select/Start, Menu,
+volume down/up and L2/R2, plus Back for a touch profile. Existing bindings are
+retained; only missing labels are requested. Remove a binding from the input
+profile to remap it. Calibration plays no sound. A completed mapping is written
+to the selected output and the app enters test mode. A timeout or interruption
+leaves the existing output unchanged. Analog-axis and touch transforms remain
+profile settings rather than part of button calibration.

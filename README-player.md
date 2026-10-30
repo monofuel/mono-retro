@@ -8,15 +8,15 @@ can be imported; state creation and ROM browsing are future work.
 
 ## Build and run
 
-Use Nim 2 and Nimby with the project's existing dependencies. The current
-Paddy `anbernic-handhelds` branch supplies the gamepad APIs. Native GPU playback
-uses Windy's `monofuel/drm-gpu-player` fork, including the X11 wheel fix. Point
-the Nimby workspace at that checkout; for a separate worktree, set
-`MONO_RETRO_WINDY=/path/to/windy-checkout`. The project configuration applies that
-override to builds and checks. Native Linux dependencies are
-libudev, libevdev, libX11, libXcursor, OpenAL Soft and OpenSSL, plus a C compiler for the
-ABI bridge. Install Slappy ≥0.4.0 and its dependencies through Nimby in the
-existing parent workspace, preserving the Windy/Paddy branches.
+Follow the [Nimby workspace setup](README.md#build), then build with
+`make player-desktop`. The project's `nimby.lock` pins all Nim dependencies,
+including the Windy GPU and Paddy controller-discovery forks. Native Linux
+dependencies are libudev, libevdev, libX11, libXcursor, OpenAL Soft and OpenSSL,
+plus a C compiler for the ABI bridge.
+
+For library development in a separate Windy worktree, set
+`MONO_RETRO_WINDY=/path/to/windy-checkout`. This overrides the locked Windy
+checkout for builds and checks; normal builds need no override.
 
 On NixOS, the scoped development shell supplies native build/runtime libraries:
 

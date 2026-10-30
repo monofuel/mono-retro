@@ -1,7 +1,7 @@
 version = "0.1.0"
 author = "monofuel"
 license = "MIT"
-description = "Native Nim handheld launcher and hardware tests"
+description = "Nim handheld launcher, hardware tests and libretro player"
 srcDir = "src"
 
 requires "nim >= 2.0.0"

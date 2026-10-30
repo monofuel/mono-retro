@@ -1,18 +1,13 @@
 # Windy handheld tester
 
-The hardware tester uses the sibling Windy checkout's `anbernic-handhelds`
-branch for display and multitouch. Paddy's `anbernic-handhelds` branch supplies
-controller discovery; Anbernic mappings remain in mono-retro. The old direct
-framebuffer/DRM implementation has moved into Windy.
+The hardware tester uses [Windy](https://github.com/treeform/windy) for display
+and multitouch, and [Paddy](https://github.com/treeform/paddy) for controller
+discovery. Anbernic mappings remain in mono-retro.
 
-Register dependencies from the parent Nimby workspace:
-
-```sh
-nimby sync windy/nimby.lock
-nimby install windy/windy.nimble
-nimby install paddy/paddy.nimble
-nimby install mono-retro/mono-retro.nimble
-```
+Use the [Nimby workspace setup](README.md#build). The project's `nimby.lock`
+pins the same Windy and Paddy forks for the tester, launcher and player.
+The [hardware test guide](docs/hardware-test.md) covers controls, profiles,
+calibration and audio diagnostics.
 
 Run the build commands below from mono-retro. Cross builds require the existing
 AArch64 compiler and target libudev/libevdev libraries; `MONO_RETRO_CC` selects
@@ -37,8 +32,9 @@ on a handheld. A separate handheld build does not require X11 or GLX.
 
 The RG SP opens one native-size window on `/dev/fb0`. The DS Plus opens
 independent windows on DSI-1 and DSI-2 through one shared DRM device connection.
-Its gt9xx-0 touchscreen is assigned to the second window. Windy applies scaling
-and touch rotation; the app draws the resulting window-local pixel positions.
+The selected profile supplies connector order and the touch device name, which
+differ between stock and ROCKNIX kernels. Touch is assigned to the second
+window. Windy applies scaling and touch rotation; the app draws window-local positions.
 Touch contacts retain IDs and have begin/move/end/cancel phases. There is no
 smoothing, gesture recognition or synthesized mouse input. X11 and browser
 multitouch are future work.
