@@ -1,8 +1,8 @@
 import
   std/[monotimes, os, parseopt, posix, strutils, times],
   paddy, pixie, windy,
-  retro/[anbernic, display, libretro, playeraudio, playerclock, playerds, playerinput,
-    playerprofile, playervideo, playerworker, settings]
+  retro/[anbernic, display, libretro, playeraudio, playerclock, playerds, playergpu,
+    playerinput, playerprofile, playervideo, playerworker, settings]
 
 const
   SaveIntervalSeconds = 5
@@ -11,6 +11,7 @@ const
   ExitHoldSeconds = 2
   Help = """Usage: mono-retro-player --core:PATH --rom:PATH --save-dir:DIR [--frames:N] [--mute] [--load-state:PATH]
 Libretro player with Slappy audio. --mute opens no audio device.
+--video:auto|cpu|gpu selects native presentation; auto uses paired Panfrost outputs.
 --no-input requires --frames and feeds neutral controls for repeatable benchmarks.
 --load-state:PATH is a startup-only CLI import of a core-defined format.
 Desktop: drop a state file onto a window.
@@ -36,6 +37,7 @@ proc main() =
     corePath, romPath, saveDirectory, statePath: string
     limit = 0'u64
     muted = false
+    videoMode = AutoVideo
     noInput = false
     dsLayout = NoDsLayout
     earthboundDs = false
@@ -52,6 +54,7 @@ proc main() =
       if value.len == 0: raise newException(IOError, "Missing state path")
       statePath = value
     of "mute": muted = true
+    of "video": videoMode = parseVideoMode(value)
     of "no-input": noInput = true
     of "ds-layout":
       if earthboundDs:
@@ -99,14 +102,17 @@ proc main() =
       initialSize, windowTitles, vsync = settings.displayBackend() == "drm")
   defer: screen.close()
   validateDsDisplay(dual.layout, settings.displayBackend(), screen.count())
+  let gpu = openPlayerGpu(videoMode, screen, settings)
+  defer: gpu.close()
   var
     activeScreen = screen.count() - 1
     black: seq[Image]
-  for index in 0 ..< screen.count():
-    let image = newImage(screen.width(index), screen.height(index))
-    image.fill(rgbx(0, 0, 0, 255))
-    black.add(image)
-    screen.window(index).presentPixels(image)
+  if gpu == nil:
+    for index in 0 ..< screen.count():
+      let image = newImage(screen.width(index), screen.height(index))
+      image.fill(rgbx(0, 0, 0, 255))
+      black.add(image)
+      screen.window(index).presentPixels(image)
   initGamepads()
   defer: closeGamepads()
   var sound: PlayerAudio
@@ -118,6 +124,7 @@ proc main() =
   echo "Save: ", session.savePath
   if statePath.len > 0: echo "State: ", statePath
   echo "Audio: ", (if muted: "muted" else: "Slappy"), "; core rate: ", session.av.timing.fps
+  echo "Presentation: ", (if gpu == nil: "CPU" else: "GPU paired atomic")
   var
     clock = newFrameClock(session.av.timing.fps, getMonoTime().ticks)
     fps = session.av.timing.fps
@@ -151,6 +158,10 @@ proc main() =
     resetTimings()
   when defined(playerTimings) or defined(playerWalkBenchmark):
     let loopStarted = getMonoTime()
+  when defined(playerTimings):
+    let
+      loopCpuStarted = cpuTime()
+      loopProcessCpuStarted = processCpuTime()
   # Prime the pipeline before its first presentation deadline.
   session.prefetch(benchmarkButtons(0))
   clock.advance(getMonoTime().ticks)
@@ -178,7 +189,7 @@ proc main() =
     else:
       exitHeld = false
     if not desktop and dual.layout == NoDsLayout and screen.count() > 1 and pad.buttonPressed(GamepadL2):
-      screen.window(activeScreen).presentPixels(black[activeScreen])
+      if gpu == nil: screen.window(activeScreen).presentPixels(black[activeScreen])
       activeScreen = (activeScreen + 1) mod screen.count()
     var focusedIndex = -1
     if desktop:
@@ -231,7 +242,7 @@ proc main() =
     if noInput:
       buttons = 0
       pointerInput = PointerInput()
-    session.step(buttons, pointerInput)
+    session.step(buttons, pointerInput, compareVideo = gpu != nil)
     # At most one core frame overlaps presentation. Controls are sampled again
     # on each main-loop iteration; the core and all its callbacks stay serialized.
     if not session.shutdown and (limit == 0 or session.frames < limit):
@@ -241,7 +252,11 @@ proc main() =
       measured(AudioOutput): sound.submit(session.takeAudio(), session.av.timing.sampleRate)
     if dual.layout != NoDsLayout and session.image != nil:
       validateDsFrame(session.image.width, session.image.height, dual.panelWidth, dual.panelHeight)
-    if dual.layout == SeparateDs and session.image != nil:
+    if gpu != nil:
+      measured(Presentation):
+        gpu.present(session.image, session.videoFrames, activeScreen,
+          dual.layout == SeparateDs, dual.panelWidth, dual.panelHeight, changed = session.imageChanged)
+    elif dual.layout == SeparateDs and session.image != nil:
       for index in 0 .. 1:
         let
           output = screen.window(index)
@@ -283,6 +298,8 @@ proc main() =
   when defined(playerTimings) or defined(playerWalkBenchmark):
     echo "Loop milliseconds: ", (getMonoTime() - loopStarted).inMilliseconds
   when defined(playerTimings):
+    echo "Loop main-thread CPU milliseconds: ", (cpuTime() - loopCpuStarted) * 1000
+    echo "Loop process CPU milliseconds: ", (processCpuTime() - loopProcessCpuStarted) * 1000
     echo "Unchanged native screens: ", reusedScreens
 
 when isMainModule:

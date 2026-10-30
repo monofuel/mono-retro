@@ -9,8 +9,11 @@ can be imported; state creation and ROM browsing are future work.
 ## Build and run
 
 Use Nim 2 and Nimby with the project's existing dependencies. The current
-Windy and Paddy `anbernic-handhelds` branches supply the APIs used here; no
-player-specific library changes are required. Native Linux dependencies are
+Paddy `anbernic-handhelds` branch supplies the gamepad APIs. Native GPU playback
+uses Windy's `monofuel/drm-gpu-player` fork, including the X11 wheel fix. Point
+the Nimby workspace at that checkout; for a separate worktree, set
+`MONO_RETRO_WINDY=/path/to/windy-checkout`. The project configuration applies that
+override to builds and checks. Native Linux dependencies are
 libudev, libevdev, libX11, libXcursor and OpenAL Soft, plus a C compiler for the
 ABI bridge. Install Slappy ≥0.4.0 and its dependencies through Nimby in the
 existing parent workspace, preserving the Windy/Paddy branches.
@@ -100,8 +103,23 @@ stretch the image. The window starts at the core's native base resolution (for
 example, 240×160 for GBA). Below native size, the image remains at 1× and is
 center-cropped. Hardware rendering requests are unsupported.
 
-DRM playback requests synchronized presentation from Windy's `anbernic-handhelds`
-backend. Each screen uses two buffers and switches at vblank, avoiding writes
+On the source-kernel DS Plus, `--video:auto` (the default) uses Panfrost for two
+unrotated DRM outputs. One native-size texture feeds both screens, with GPU
+nearest-neighbour integer scaling, black borders and one paired atomic commit.
+Old storage is retained until both controllers complete. Single-screen games
+keep the other output black and L2 swaps them. Duplicate callbacks and identical
+fresh frames retain scanout without another upload. X11, fbdev and stock-kernel
+CPU playback keep their existing paths.
+
+`--video:cpu` selects the existing path for comparison/recovery; `--video:gpu`
+requires the paired path. Selection is at startup. GPU initialization errors are
+reported rather than silently switching renderers. GPU playback requires Mesa's
+hardware driver, libgbm, libEGL and libGLESv2, loaded only when requested. It needs
+no X11/Wayland server. Frames still use Pixie capture: standard libretro XRGB is
+converted on the worker, while the private XBGR path avoids that conversion.
+
+CPU DRM playback requests synchronized presentation from Windy.
+Each screen uses two buffers and switches at vblank, avoiding writes
 into the currently visible buffer. Uploads wait for the previous switch before
 reusing its storage; the frame clock still sets the emulation rate. This requires
 the fork's DRM page-flip support. X11 and fbdev retain their existing presentation.
@@ -357,8 +375,12 @@ at 60 FPS. Walking mode cannot be combined with `--no-input`.
 
 `make player-timings-rg-ds-plus` builds the full player with optional stage timers.
 It accepts the normal player arguments and reports exclusive milliseconds per
-emulated frame plus loop elapsed time on exit. `CoreWork` excludes the separately
-reported video/audio capture callbacks. Timers compile out of normal builds.
+emulated frame plus loop elapsed and CPU times on exit. `CoreWork` excludes the
+separately reported video/audio capture callbacks. Stage wall times include
+waits; Linux Nim `cpuTime` counts the calling thread. The separate process counter
+uses `CLOCK_PROCESS_CPUTIME_ID` to include workers. Timers compile out of normal
+builds. `make player-walking-rg-ds-plus` adds bounded walking input for matched
+`--video:cpu`/`--video:auto` comparisons.
 
 The XRGB8888 conversion uses ARM64 NEON where available and a scalar loop elsewhere,
 retaining padded and unaligned row support. Scaling clears only black borders

@@ -1,6 +1,6 @@
 when defined(playerTimings):
   import
-    std/[monotimes, strutils]
+    std/[monotimes, os, posix, strutils]
 
 type
   PlayerStage* = enum
@@ -39,6 +39,15 @@ proc resetTimings*() =
   ## Exclude initialization callbacks from the measured frame loop.
   when defined(playerTimings):
     stageTicks = default(array[PlayerStage, int64])
+
+when defined(playerTimings):
+  proc processCpuTime*(): float64 =
+    ## Include every worker; Nim's cpuTime uses the calling thread on Linux.
+    const NanosecondsPerSecond = 1_000_000_000
+    var value: Timespec
+    if clock_gettime(CLOCK_PROCESS_CPUTIME_ID, value) != 0:
+      raiseOSError(osLastError(), "Reading process CPU time")
+    value.tv_sec.float64 + value.tv_nsec.float64 / NanosecondsPerSecond
 
 proc printTimings*(frames: uint64) =
   ## Report exclusive average stage costs; core calls include capture callbacks.

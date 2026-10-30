@@ -19,11 +19,14 @@ Already implemented in the player or the Windy handheld fork:
 - Windy DRM double buffering and vblank page flips. Tearing was manually resolved
   on the DS Plus; this does not establish full-speed emulation or clean audio.
 - Optional opaque XBGR negotiation and direct row capture, described below.
+- Paired Panfrost presentation on the source-kernel DS Plus: one native texture,
+  GPU integer scaling, paired atomic updates and retained unchanged scanout.
 
 The core worker overlaps emulation with presentation, but the main thread still
 requests the next step and queues completed PCM. Display waits can therefore
-still affect scheduling. Video still passes through Pixie images, CPU screen
-splitting/scaling, and screen-sized scanout uploads.
+still affect scheduling. Capture still uses Pixie images. The CPU path splits,
+scales and uploads full panels; the GPU path consumes the native combined image.
+Standard XRGB conversion remains on the worker; private XBGR avoids it.
 
 Decompbound is mildly crunchy around inventory/menu work. melonDS DS is much
 crunchier and needs its own profile. A separate agent owns Decompbound internals;
@@ -165,7 +168,8 @@ The test compares every GPU-rendered pixel against the integer-scaled synthetic
 pattern before scanout. It measures CPU time, upload/render/finish/submission,
 waits and per-output completion skew. `glFinish` is intentionally conservative;
 explicit fencing/overlap and player integration follow measured success. The
-existing player, public Windy API, X11 and fbdev behavior remain unchanged.
+standalone proof keeps player behavior unchanged. Its reusable integration is
+described below; X11 and fbdev retain their existing paths.
 
 Device requirements are Mesa's Panfrost driver, EGL, GBM and GLES, with X11,
 Wayland and runtime LLVM disabled. Gentoo's Panfrost shader compiler still has
@@ -176,7 +180,7 @@ target configured; local source generators/linkers still need their own RAM.
 The standalone hardware proof passes with Mesa 26.1.8's Mali-G52 Panfrost driver.
 All pixels/borders match exactly in both layouts and both formats. One shared
 framebuffer passes atomic testing and paired flips, with both completion events
-before retirement. Eight-second synthetic runs stay near 60 FPS: total process
+before retirement. Eight-second synthetic runs stay near 60 FPS: main-thread
 CPU time falls from about 7.60 ms/frame to 1.94 ms for DS-sized XBGR and 2.12 ms
 for EarthBound-sized XBGR. XRGB scanout works too. Completion timestamps remain
 about 6.1 ms apart, so this does not establish physical panel phase lock.
@@ -186,11 +190,36 @@ EGL configuration must explicitly exclude depth, stencil and MSAA: an initial
 configuration brings render/swap/finish to about 5 ms. Details and comparison
 limits are in Windy's proof guide on `monofuel/drm-gpu-proof`.
 
-These results justify integrating native-frame GPU presentation next. They do
-not establish an emulator speedup; the player still uses its existing CPU path.
+These synthetic results alone do not establish an emulator speedup.
 Monofuel confirms both synthetic layouts look correct: upright and crisp, correct
 screen order, smooth markers, even borders and no visible moving tears. The
 launcher is restored; the proof uses no audio.
+
+### Player integration
+
+Windy's `monofuel/drm-gpu-player` branch exposes `windy/drmpixels`: two idle
+native windows, one Pixie image and two source crops. Its guide is
+`docs/drm-pixel-pairs.md`. GPU resources close before the windows; libraries load
+lazily, so CPU-only users need no Mesa. Device policy remains in this app.
+
+The player defaults to GPU presentation for two unrotated DRM outputs with a
+Panfrost render driver. `--video:cpu` retains the existing path; `--video:gpu`
+requires GPU presentation and reports failures. Single-screen games/L2 use a
+black inactive crop. Before recycling storage, the worker optionally compares
+the new image with its predecessor. Identical video therefore needs no extra
+copy, upload or display wait.
+
+A matched muted EarthBound DS walking test runs360frames in about6s on both
+paths. Frontend-thread CPU is roughly3.9→1.5ms/frame and total process CPU
+14.0→11.0ms/frame: about62% and22% lower. GPU stage wall time includes vblank
+waits and is not CPU work. Process timing explicitly counts every worker rather
+than using Linux's thread-only Nim `cpuTime`. These are scene-specific results.
+
+Muted melonDS DS boot tests also pass. GPU readback covers source crops, odd
+borders, resizing, clipping, black outputs and swaps. X11/GLX, wheel handling,
+core/worker tests and RG SP compilation retain coverage. Audible playback and
+manual gameplay acceptance remain separate. Preserving raw XRGB through capture,
+instead of first normalizing it to Pixie RGBA, remains a future transport change.
 
 ## 3. Make stalls measurable and scheduling explicit
 

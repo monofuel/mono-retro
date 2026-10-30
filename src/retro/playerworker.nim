@@ -38,6 +38,7 @@ type
     image*: Image
     frames*, videoFrames*, audioFrames*: uint64
     shutdown*: bool
+    imageChanged*: bool ## Fresh image; exact change detection is opt-in.
 
 proc owned(value: string): string =
   ## Copy a string before transferring ownership to another thread.
@@ -162,14 +163,20 @@ proc prefetch*(worker: CoreWorker, buttons: uint16, pointerInput = PointerInput(
     pointerInput: pointerInput, reusable: move(worker.reusable)))
   worker.pending = true
 
-proc step*(worker: CoreWorker, buttons: uint16, pointerInput = PointerInput()) =
-  ## Consume exactly one frame, synchronously starting one when none was prefetched.
+proc step*(worker: CoreWorker, buttons: uint16, pointerInput = PointerInput(),
+    compareVideo = false) =
+  ## Consume one frame; optionally compare video before recycling its old storage.
   worker.prefetch(buttons, pointerInput)
   worker.finishPending()
   var reply = move(worker.reply)
   worker.ready = false
   reply.checked()
+  worker.imageChanged = false
   if reply.image != nil:
+    worker.imageChanged = not compareVideo or worker.image == nil or
+      worker.image.width != reply.image.width or worker.image.height != reply.image.height or
+      not equalMem(unsafeAddr worker.image.data[0], unsafeAddr reply.image.data[0],
+        reply.image.data.len * sizeof(ColorRGBX))
     worker.reusable = move(worker.image)
     worker.image = move(reply.image)
   worker.audio = move(reply.audio)

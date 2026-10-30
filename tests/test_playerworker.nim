@@ -19,22 +19,26 @@ proc main() =
   let worker = openCoreWorker(core, rom, directory / "buffers", captureAudio = true)
   doAssert worker.libraryName == "Player fixture" and worker.libraryVersion == "1"
   doAssert worker.av.geometry.baseWidth == 3 and worker.av.timing.fps == 60
-  worker.step(256, PointerInput(x: 12, y: 34, pressed: true))
+  worker.step(256, PointerInput(x: 12, y: 34, pressed: true), compareVideo = true)
+  doAssert worker.imageChanged
   doAssert worker.frames == 1 and worker.image.data[0] == rgbx(255, 0, 0, 255)
   doAssert worker.takeAudio() == samples
   doAssert worker.takeAudio().len == 0
   worker.prefetch(0)
   worker.save()
   doAssert worker.frames == 1
-  worker.step(256)
+  worker.step(256, compareVideo = true)
+  doAssert worker.imageChanged
   doAssert worker.frames == 2 and worker.image.data[0] == rgbx(0, 255, 0, 255)
   worker.prefetch(0)
-  worker.step(0)
+  worker.step(0, compareVideo = true)
+  doAssert not worker.imageChanged
   doAssert worker.frames == 3 and worker.videoFrames == 2
   doAssert worker.image.data[0] == rgbx(0, 255, 0, 255)
   worker.prefetch(0)
   worker.pause()
-  worker.step(0)
+  worker.step(0, compareVideo = true)
+  doAssert worker.imageChanged
   doAssert worker.frames == 4 and worker.takeAudio().len == 0
   doAssert worker.image.data[0] == rgbx(0, 0, 255, 255)
   worker.prefetch(0)
@@ -43,7 +47,8 @@ proc main() =
   except IOError as error:
     rejected = error.msg.contains("Core rejected")
   doAssert rejected
-  worker.step(0)
+  worker.step(0, compareVideo = true)
+  doAssert not worker.imageChanged
   doAssert worker.frames == 5 and worker.image.data[0] == rgbx(0, 0, 255, 255)
   worker.prefetch(0)
   worker.importStateData("fixture-state", "live drop")

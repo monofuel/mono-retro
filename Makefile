@@ -15,6 +15,7 @@ check:
 	nim check tests/test_playerds.nim
 	nim check tests/test_playerstate.nim
 	nim check tests/test_playerworker.nim
+	nim check tests/test_playergpu.nim
 	nim check tests/test_playerpixels.nim
 	nim check tests/test_playerxbgr.nim
 	nim check tools/prepare_lost_in_blue.nim
@@ -77,7 +78,7 @@ player-rg-ds-plus:
 	mkdir -p build
 	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=drm nim c -o:build/mono-retro-player-rg-ds-plus src/player.nim
 
-.PHONY: benchmark-core benchmark-core-arm64 player-timings-rg-ds-plus
+.PHONY: benchmark-core benchmark-core-arm64 player-timings-rg-ds-plus player-walking-rg-ds-plus
 benchmark-core:
 	mkdir -p build
 	nim c -o:build/benchmark-core tools/benchmark_core.nim
@@ -87,6 +88,9 @@ benchmark-core-arm64:
 player-timings-rg-ds-plus:
 	mkdir -p build
 	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=drm nim c -d:playerTimings -o:build/player-timings-rg-ds-plus src/player.nim
+player-walking-rg-ds-plus:
+	mkdir -p build
+	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=drm nim c -d:playerTimings -d:playerWalkBenchmark -o:build/player-walking-rg-ds-plus src/player.nim
 
 player-fixtures:
 	mkdir -p build
@@ -100,6 +104,7 @@ test-player: player-fixtures prepare-lost-in-blue-tool
 	nim r -o:build/test-playerds tests/test_playerds.nim
 	nim r -o:build/test-playerstate tests/test_playerstate.nim
 	nim r -o:build/test-playerworker tests/test_playerworker.nim
+	nim r -o:build/test-playergpu tests/test_playergpu.nim
 	nim r -o:build/test-playerpixels tests/test_playerpixels.nim
 	nim r -o:build/test-playerxbgr tests/test_playerxbgr.nim
 	nim r -o:build/test-prepare-lost-in-blue tests/test_prepare_lost_in_blue.nim
