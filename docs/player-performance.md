@@ -211,7 +211,10 @@ copy, upload or display wait.
 
 A matched muted EarthBound DS walking test runs360frames in about6s on both
 paths. Frontend-thread CPU is roughly3.9→1.5ms/frame and total process CPU
-14.0→11.0ms/frame: about62% and22% lower. GPU stage wall time includes vblank
+14.0→11.0ms/frame: about62% and22% lower in that pair. Clocks were not sampled
+during this comparison and another agent profiled the device during the session;
+treat these as indicative measurements, not a controlled speedup benchmark.
+GPU stage wall time includes vblank
 waits and is not CPU work. Process timing explicitly counts every worker rather
 than using Linux's thread-only Nim `cpuTime`. These are scene-specific results.
 
