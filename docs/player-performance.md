@@ -169,8 +169,27 @@ existing player, public Windy API, X11 and fbdev behavior remain unchanged.
 
 Device requirements are Mesa's Panfrost driver, EGL, GBM and GLES, with X11,
 Wayland and runtime LLVM disabled. Gentoo's Panfrost shader compiler still has
-build-time LLVM/Clang/libclc dependencies. Hardware acceptance and measured
-performance results are pending the first device runs.
+build-time LLVM/Clang/libclc dependencies. Heavy portable builds should use the
+MLE Gentoo builder. The DS Plus has its portable client and matching distcc
+target configured; local source generators/linkers still need their own RAM.
+
+The standalone hardware proof passes with Mesa 26.1.8's Mali-G52 Panfrost driver.
+All pixels/borders match exactly in both layouts and both formats. One shared
+framebuffer passes atomic testing and paired flips, with both completion events
+before retirement. Eight-second synthetic runs stay near 60 FPS: total process
+CPU time falls from about 7.60 ms/frame to 1.94 ms for DS-sized XBGR and 2.12 ms
+for EarthBound-sized XBGR. XRGB scanout works too. Completion timestamps remain
+about 6.1 ms apart, so this does not establish physical panel phase lock.
+
+EGL configuration must explicitly exclude depth, stencil and MSAA: an initial
+16× multisampled configuration took about 78 ms waiting for the GPU. The final
+configuration brings render/swap/finish to about 5 ms. Details and comparison
+limits are in Windy's proof guide on `monofuel/drm-gpu-proof`.
+
+These results justify integrating native-frame GPU presentation next. They do
+not establish an emulator speedup; the player still uses its existing CPU path.
+Physical orientation/tearing acceptance of the synthetic test remains a manual
+check. The launcher is restored and no audio test is required for this proof.
 
 ## 3. Make stalls measurable and scheduling explicit
 
