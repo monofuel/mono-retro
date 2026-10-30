@@ -64,7 +64,7 @@ The DS Plus display controller accepts both XRGB8888 and Pixie-compatible
 XBGR/ABGR layouts. Pixie is not incompatible with the display; insisting on a
 Pixie Image after every libretro callback causes the conversion back to RGBA.
 
-### Opaque XBGR: frontend implemented, integration to verify
+### Opaque XBGR: frontend implemented, device integration confirmed
 
 The [private extension](libretro-extensions.md) lets a cooperating core keep its
 opaque Pixie bytes unchanged. The host copies rows rather than swapping channels.
@@ -79,9 +79,10 @@ Its contract and C constants live in
 - Dual-screen composition may still copy top/bottom rows into a combined buffer.
   Eliminating channel conversions is separate from eliminating copies.
 
-Confirm the Decompbound agent's integration, selected runtime path, colour
-identity and fallback. The frontend has desktop/ARM64-QEMU coverage; the new
-frontend/core combination still needs device validation.
+Monofuel confirms the Decompbound implementation is merged to master and tested
+on the RG DS Plus. The frontend also has desktop/ARM64-QEMU coverage, including
+colour identity and fallback to an older host. Preserve these checks as the
+presentation path changes.
 
 For ordinary cores such as melonDS DS, the future presentation path should
 consume native XRGB directly too. Carry width, height, byte pitch, pixel format
@@ -143,6 +144,33 @@ mono-retro-player owns libretro transport, layout and application scheduling.
 Keep Paddy input and Slappy audio, and keep game/device-specific policy in the app.
 Use the existing Nim/library stack for generic backend work.
 Choose one proven path before building a broad rendering abstraction.
+
+### Selected experiment: GPU rendering with paired atomic presentation
+
+Read-only inspection of the running source kernel identifies rockchip-drm on
+card0 and Panfrost on card1/renderD128. The upstream VOP2 scaler selects
+bicubic/bilinear enlargement; our kernel patches do not change its filtering.
+The first experiment therefore uses GPU nearest-neighbour rendering, preserving
+the desired crisp pixels without kernel changes.
+
+Windy's isolated `monofuel/drm-gpu-proof` branch contains a standalone diagnostic,
+documented in its `docs/drm-gpu-proof.md`. It uploads one combined XRGB/XBGR source
+texture, renders both panels into one linear 1024×1536 GBM allocation, and uses
+two 1:1 primary-plane crops. Both plane framebuffer changes are submitted in one
+atomic transaction. Buffer retirement waits for both CRTC completion events;
+there is at most one pending pair. This coordinates the same frame on both
+outputs without claiming physically phase-locked panel refresh.
+
+The test compares every GPU-rendered pixel against the integer-scaled synthetic
+pattern before scanout. It measures CPU time, upload/render/finish/submission,
+waits and per-output completion skew. `glFinish` is intentionally conservative;
+explicit fencing/overlap and player integration follow measured success. The
+existing player, public Windy API, X11 and fbdev behavior remain unchanged.
+
+Device requirements are Mesa's Panfrost driver, EGL, GBM and GLES, with X11,
+Wayland and runtime LLVM disabled. Gentoo's Panfrost shader compiler still has
+build-time LLVM/Clang/libclc dependencies. Hardware acceptance and measured
+performance results are pending the first device runs.
 
 ## 3. Make stalls measurable and scheduling explicit
 
