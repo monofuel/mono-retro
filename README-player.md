@@ -317,6 +317,9 @@ conversion are outside this MVP.
 
 ## Performance diagnostics
 
+See the [performance roadmap](docs/player-performance.md) for measured limits,
+native-format transport, display-plane/GPU presentation and audio scheduling ideas.
+
 Cooperating cores can negotiate an [opaque XBGR8888 extension](docs/libretro-extensions.md)
 to pass Pixie-compatible pixel bytes without channel conversion. The frontend
 copies padded rows into owned images; scaling and presentation keep their existing
