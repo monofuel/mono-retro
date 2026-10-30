@@ -239,3 +239,10 @@ profile to remap it. Calibration plays no sound. A completed mapping is written
 to the selected output and the app enters test mode. A timeout or interruption
 leaves the existing output unchanged. Analog-axis and touch transforms remain
 profile settings rather than part of button calibration.
+
+## License
+
+Original code and documentation use the [MIT license](LICENSE). Third-party
+files retain their own licenses: see [the libretro header notice](third_party/README.md)
+and [the Roboto font attribution](assets/README.md). Separately obtained emulator
+cores retain their own licenses.
