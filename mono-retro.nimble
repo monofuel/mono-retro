@@ -1,5 +1,6 @@
 version = "0.1.0"
 author = "monofuel"
+license = "MIT"
 description = "Native Nim handheld launcher and hardware tests"
 srcDir = "src"
 
