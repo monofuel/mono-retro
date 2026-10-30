@@ -28,9 +28,10 @@ still affect scheduling. Capture still uses Pixie images. The CPU path splits,
 scales and uploads full panels; the GPU path consumes the native combined image.
 Standard XRGB conversion remains on the worker; private XBGR avoids it.
 
-Decompbound is mildly crunchy around inventory/menu work. melonDS DS is much
-crunchier and needs its own profile. A separate agent owns Decompbound internals;
-this roadmap concentrates on the shared frontend and display stack.
+Monofuel manually confirms the combined Decompbound/mono-retro-player build runs
+full speed flawlessly on the RG DS Plus with normal audio. This incorporates
+both the other agent's core optimizations and this frontend's GPU presentation.
+melonDS DS performance remains separate and needs its own profile.
 
 ## Reference measurements
 
@@ -220,8 +221,9 @@ than using Linux's thread-only Nim `cpuTime`. These are scene-specific results.
 
 Muted melonDS DS boot tests also pass. GPU readback covers source crops, odd
 borders, resizing, clipping, black outputs and swaps. X11/GLX, wheel handling,
-core/worker tests and RG SP compilation retain coverage. Audible playback and
-manual gameplay acceptance remain separate. Preserving raw XRGB through capture,
+core/worker tests and RG SP compilation retain coverage. Monofuel's subsequent
+manual gameplay/audio acceptance confirms the combined Decompbound setup;
+melonDS gameplay performance is separate. Preserving raw XRGB through capture,
 instead of first normalizing it to Pixie RGBA, remains a future transport change.
 
 ## 3. Make stalls measurable and scheduling explicit
