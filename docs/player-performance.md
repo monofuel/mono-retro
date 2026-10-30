@@ -188,8 +188,9 @@ limits are in Windy's proof guide on `monofuel/drm-gpu-proof`.
 
 These results justify integrating native-frame GPU presentation next. They do
 not establish an emulator speedup; the player still uses its existing CPU path.
-Physical orientation/tearing acceptance of the synthetic test remains a manual
-check. The launcher is restored and no audio test is required for this proof.
+Monofuel confirms both synthetic layouts look correct: upright and crisp, correct
+screen order, smooth markers, even borders and no visible moving tears. The
+launcher is restored; the proof uses no audio.
 
 ## 3. Make stalls measurable and scheduling explicit
 
