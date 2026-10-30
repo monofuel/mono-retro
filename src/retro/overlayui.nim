@@ -127,7 +127,7 @@ proc renderPanel*(ui: OverlayUi, snapshot: RaSnapshot, selected, first: int,
     areas = overlayLayout(first, snapshot.achievements.len, details)
     title = if snapshot.gameTitle.len > 0: snapshot.gameTitle else: "RetroAchievements"
   image.fill(Background)
-  ui.paint(image, "Achievements", Margin, 12, 24)
+  ui.paint(image, "Achievements · Casual", Margin, 12, 24)
   ui.paint(image, ui.oneLine(title, 17, OverlayPanelWidth - Margin * 2), Margin, 43, 17, Accent)
   ui.paint(image, ui.oneLine(snapshot.statusText(), 14, OverlayPanelWidth - Margin * 2),
     Margin, 69, 14, Muted)
