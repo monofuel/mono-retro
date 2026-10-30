@@ -7,13 +7,22 @@ RG DS Plus, with X11 support for desktop development and play.
 - **Launcher:** open games and the hardware tester, view system and battery
   information, reboot or shut down.
 - **Player:** run libretro cores with integer scaling, audio, controller input,
-  save files and state imports. DS games can use two screens and touch input.
+  save files and state imports.
 - **Hardware tester:** check displays, buttons, sticks, multitouch and sound;
   inspect raw input and calibrate device profiles.
 
-Tested cores include mGBA, melonDS DS and
-[Decompbound](https://github.com/monofuel/decompbound). Bring your own ROMs and
-libretro cores. This project does not distribute ROMs.
+Tested cores include mGBA, [melonDS DS](https://github.com/JesseTG/melonds-ds) and
+[Decompbound](https://github.com/monofuel/decompbound). Bring your own cores.
+
+## Dual-screen play
+
+- **Nintendo DS on two physical displays:** melonDS DS can output its top and
+  bottom screens to separate DRM/KMS displays, with touch input on the bottom
+  screen. Tested on the RG DS Plus. On desktop, use one combined window or two
+  separate windows with mouse input for touch.
+- **Experimental SNES-DS mod support:** Decompbound's EarthBound DS companion
+  puts the game on one screen and live party stats and inventory on the other.
+  Touch selects a party member. See the [companion guide](README-player.md#earthbound-ds-companion).
 
 ## Nim libraries
 
