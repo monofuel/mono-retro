@@ -12,8 +12,8 @@ RG DS Plus, with X11 support for desktop development and play.
   inspect raw input and calibrate device profiles.
 
 Tested cores include mGBA, melonDS DS and
-[Decompbound](https://github.com/monofuel/decompbound). ROMs, saves and emulator
-cores are supplied separately.
+[Decompbound](https://github.com/monofuel/decompbound). Bring your own ROMs and
+libretro cores. This project does not distribute ROMs.
 
 ## Nim libraries
 
