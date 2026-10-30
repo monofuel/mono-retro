@@ -1,7 +1,7 @@
 import
   std/algorithm,
   pixie,
-  ./playerpixels
+  ./[playerformats, playerpixels]
 
 type
   FrameViewport* = object
@@ -11,6 +11,7 @@ const
   PixelRgb1555* = 0
   PixelXrgb8888* = 1
   PixelRgb565* = 2
+  PixelXbgr8888* = int(MonoRetroXbgr8888)
   MaxFrameDimension = 8192
 
 proc frameViewport*(sourceWidth, sourceHeight, width, height: int): FrameViewport =
@@ -29,13 +30,20 @@ proc copyFrame*(previous: Image, data: pointer, width, height, pitch: int,
     raise newException(ValueError, "Hardware-rendered frames are not supported")
   if width <= 0 or height <= 0 or width > MaxFrameDimension or height > MaxFrameDimension:
     raise newException(ValueError, "Invalid core frame dimensions")
-  let bytes = if format == PixelXrgb8888: 4 else: 2
-  if format notin [PixelRgb1555, PixelXrgb8888, PixelRgb565] or pitch < width * bytes:
+  let bytes = if format in [PixelXrgb8888, PixelXbgr8888]: 4 else: 2
+  if format notin [PixelRgb1555, PixelXrgb8888, PixelRgb565, PixelXbgr8888] or pitch < width * bytes:
     raise newException(ValueError, "Invalid core pixel format or row pitch")
+  when cpuEndian != littleEndian:
+    if format == PixelXbgr8888:
+      raise newException(ValueError, "Private XBGR8888 requires a little-endian host")
   result = previous
   if result == nil or result.width != width or result.height != height:
     result = newImage(width, height)
   let source = cast[ptr UncheckedArray[byte]](data)
+  if format == PixelXbgr8888:
+    for y in 0 ..< height:
+      copyMem(addr result.data[y * width], addr source[y * pitch], width * bytes)
+    return
   if format == PixelXrgb8888:
     for y in 0 ..< height:
       convertXrgbRow(addr source[y * pitch], addr result.data[y * width], width)

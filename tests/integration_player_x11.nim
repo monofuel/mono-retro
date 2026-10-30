@@ -101,14 +101,14 @@ proc testDs(d: Display, directory: string) =
   ## Verify DS screen routing, mouse coordinates, focus and either-window exit.
   let rom = directory / "ds.test"
   putEnv("ALSOFT_DRIVERS", "null")
-  for mode in 0 .. 4:
+  for mode in 0 .. 5:
     let
       earthbound = mode >= 3
       separate = mode != 0
       panelHeight = if earthbound: 224 else: 192
       trace = directory / ("ds-trace-" & $mode)
       layout = if separate: "separate" else: "combined"
-    writeFile(rom, if earthbound: "E" else: "N")
+    writeFile(rom, if mode == 5: "G" elif earthbound: "E" else: "N")
     putEnv("MONO_RETRO_FIXTURE_TRACE", trace)
     let process = startProcess(absolutePath("build/mono-retro-player"), args = [
       "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
@@ -206,6 +206,9 @@ proc testDs(d: Display, directory: string) =
     closeWindow(d, if mode in [2, 4]: touch else: top)
     doAssert process.waitForExit(5000) == 0
     doAssert readFile(trace).endsWith("unload=1\ndeinit=1\n")
+    if mode == 5:
+      doAssert readFile(trace).contains("xbgr_accepted=" &
+        (if cpuEndian == littleEndian: "1" else: "0") & "\n")
   delEnv("MONO_RETRO_FIXTURE_TRACE")
 
 proc dropFile(d: Display, window: Window, path: string) =
@@ -293,6 +296,7 @@ proc main() =
   ## Check presentation, input, pausing and shutdown on isolated Xvfb.
   let
     testDisplay = getEnv("MONO_RETRO_TEST_DISPLAY")
+    legacyPlayer = getEnv("MONO_RETRO_LEGACY_PLAYER")
     directory = createTempDir("player-x11-", "")
     trace = directory / "trace"
     rom = directory / "fixture.test"
@@ -317,14 +321,16 @@ proc main() =
     doAssert process.waitForExit(5000) > 0
     doAssert readFile(trace).endsWith("unload=1\ndeinit=1\n")
     doAssert getFileSize(directory / "audio-error/fixture.srm") == 16
-  for mode in 0 .. 2:
+  for mode in 0 .. (if legacyPlayer.len > 0: 4 else: 3):
     if fileExists(trace): removeFile(trace)
+    writeFile(rom, if mode >= 3: "X" else: "T")
     putEnv("ALSOFT_DRIVERS", if mode == 2: "mono-retro-no-such-driver" else: "null")
     var arguments = @[
       "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
       "--save-dir:" & directory / "saves"]
     if mode == 2: arguments.add("--mute")
-    let process = startProcess(absolutePath("build/mono-retro-player"),
+    let player = if mode == 4: absolutePath(legacyPlayer) else: absolutePath("build/mono-retro-player")
+    let process = startProcess(player,
       args = arguments, options = {poParentStreams})
     defer:
       if process.running(): process.terminate()
@@ -376,6 +382,9 @@ proc main() =
     let contents = readFile(directory / "saves/fixture.srm")
     doAssert contents.len == 16 and contents[4] == char(123)
     doAssert readFile(trace).endsWith("unload=1\ndeinit=1\n")
+    if mode >= 3:
+      doAssert readFile(trace).contains("xbgr_accepted=" &
+        (if mode == 3 and cpuEndian == littleEndian: "1" else: "0") & "\n")
   testDs(d, directory)
   testStateDrops(d, directory)
   if paramCount() == 3:

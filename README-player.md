@@ -317,6 +317,12 @@ conversion are outside this MVP.
 
 ## Performance diagnostics
 
+Cooperating cores can negotiate an [opaque XBGR8888 extension](docs/libretro-extensions.md)
+to pass Pixie-compatible pixel bytes without channel conversion. The frontend
+copies padded rows into owned images; scaling and presentation keep their existing
+behavior. Rejected format proposals return false and preserve the active format,
+allowing standard XRGB8888 fallback. Existing cores need no changes.
+
 `make benchmark-core` (or `make benchmark-core-arm64`) builds an uncapped,
 headless benchmark using the same loader and state-import path as the player:
 
@@ -360,6 +366,11 @@ xvfbPid=$!
 MONO_RETRO_TEST_DISPLAY=:97 make test-player-x11
 kill "$xvfbPid"
 ```
+
+Set `MONO_RETRO_LEGACY_PLAYER` to an older player executable when running the
+X11 integration test to additionally verify private-format rejection and
+standard XRGB8888 fallback against that host. The normal suite checks the new
+private format, colour readback, duplicates and dual-screen presentation.
 
 Use an unused isolated display large enough for the combined DS resize test
 (778 pixels high); the integration test refuses to run without

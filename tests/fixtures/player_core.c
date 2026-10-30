@@ -1,4 +1,5 @@
 #include "../../third_party/libretro.h"
+#include "../../include/mono_retro_libretro.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,7 @@ static retro_input_state_t input;
 static unsigned char memory[16];
 static unsigned frames;
 static char mode;
+static bool xbgr;
 
 static void trace(const char *event, unsigned value)
 {
@@ -39,6 +41,7 @@ void retro_init(void)
 {
     memset(memory, 0xff, sizeof(memory));
     frames = 0;
+    xbgr = false;
     trace("init", 1);
     struct retro_variable variables[] = {
         {"fixture_option", "Example; first|second"},
@@ -80,7 +83,7 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
 {
     *info = (struct retro_system_av_info){{3, 2, 3, 2, 1.5f}, {60, 48000}};
     if (mode == 'N') info->geometry = (struct retro_game_geometry){256, 384, 256, 384, 2.0f / 3.0f};
-    if (mode == 'E') info->geometry = (struct retro_game_geometry){256, 448, 256, 448, 4.0f / 7.0f};
+    if (mode == 'E' || mode == 'G') info->geometry = (struct retro_game_geometry){256, 448, 256, 448, 4.0f / 7.0f};
     /* Integer presentation must retain native pixels even with a different aspect hint. */
     if (mode == 'T') info->geometry.aspect_ratio = 2.0f;
     if (mode == 'I') info->timing.sample_rate = 0;
@@ -103,8 +106,35 @@ bool retro_load_game(const struct retro_game_info *game)
         if (!environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) ||
             !variable.value || strcmp(variable.value, "enabled")) abort();
     }
-    enum retro_pixel_format format = mode == 'B' ? 99 : RETRO_PIXEL_FORMAT_XRGB8888;
-    environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
+    if (mode == 'C' || mode == 'X' || mode == 'G') {
+        uint32_t unsupported = 0;
+        enum retro_pixel_format standard = 99;
+        if (environment(MONO_RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, NULL) ||
+            environment(MONO_RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &unsupported) ||
+            environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, NULL)) abort();
+        if (mode == 'C') {
+            uint32_t private_format = MONO_RETRO_PIXEL_FORMAT_XBGR8888;
+            if (environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &private_format)) abort();
+            if (environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &standard)) abort();
+            trace("format_rejected", 1);
+        } else {
+            uint32_t format = MONO_RETRO_PIXEL_FORMAT_XBGR8888;
+            xbgr = environment(MONO_RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
+            trace("xbgr_accepted", xbgr);
+            /* Rejections must retain the previously accepted private format. */
+            if (xbgr && (environment(MONO_RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &unsupported) ||
+                environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &standard) ||
+                environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format))) abort();
+        }
+    }
+    if (!xbgr) {
+        enum retro_pixel_format format = mode == 'B' ? 99 : RETRO_PIXEL_FORMAT_XRGB8888;
+        if (!environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) return false;
+    }
+    if (mode == 'C') {
+        uint32_t unsupported = 0;
+        if (environment(MONO_RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &unsupported)) abort();
+    }
     trace("load", 1);
     return true;
 }
@@ -132,7 +162,7 @@ void retro_run(void)
     uint32_t pixels[] = {0xff0000, 0x00ff00, 0x0000ff, 0xdeadbeef,
                               0xffffff, 0x808080, 0x000000, 0xdeadbeef};
     int16_t samples[1600] = {100, -100, 200, -200};
-    const size_t audio_frames = mode == 'T' || mode == 'N' || mode == 'E' ? 799 : 2;
+    const size_t audio_frames = mode == 'T' || mode == 'N' || mode == 'E' || mode == 'G' ? 799 : 2;
     poll_input();
     unsigned mask = (uint16_t)input(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
     if (input(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A) != !!(mask & 256)) abort();
@@ -154,20 +184,29 @@ void retro_run(void)
         info.timing.sample_rate = 44100;
         if (!environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info)) abort();
     }
-    if (mode == 'N' || mode == 'E') {
+    if (mode == 'N' || mode == 'E' || mode == 'G') {
         static uint32_t ds_pixels[448][257];
-        const unsigned panel_height = mode == 'E' ? 224 : 192;
+        const unsigned panel_height = mode == 'N' ? 192 : 224;
         for (unsigned y = 0; y < panel_height * 2; y++)
             for (unsigned x = 0; x < 256; x++)
-                ds_pixels[y][x] = y < panel_height ? (x < 128 ? 0xff0000 : 0x00ff00) :
-                    (x < 128 ? 0x0000ff : 0xffffff);
+                ds_pixels[y][x] = y < panel_height ?
+                    (x < 128 ? (xbgr ? 0xff0000ff : 0xff0000) : (xbgr ? 0xff00ff00 : 0x00ff00)) :
+                    (x < 128 ? (xbgr ? 0xffff0000 : 0x0000ff) : (xbgr ? 0xffffffff : 0xffffff));
         video(ds_pixels, 256, panel_height * 2, sizeof(ds_pixels[0]));
     } else if (mode == 'V') {
         /* A new colour, a duplicate with an older recycled buffer, then new pixels. */
         pixels[0] = frames == 1 ? 0xff0000 : (frames == 2 ? 0x00ff00 : 0x0000ff);
         video(frames == 3 ? NULL : pixels, 3, 2, sizeof(uint32_t) * 4);
     } else {
-        video(mode == 'H' ? RETRO_HW_FRAME_BUFFER_VALID : (mode == 'D' && frames > 1 ? NULL : pixels), 3, 2, sizeof(uint32_t) * 4);
+        if (xbgr) {
+            pixels[0] = 0xff0000ff;
+            pixels[1] = 0xff00ff00;
+            pixels[2] = 0xffff0000;
+            pixels[4] = 0xffffffff;
+            pixels[5] = 0xff808080;
+            pixels[6] = 0xff000000;
+        }
+        video(mode == 'H' ? RETRO_HW_FRAME_BUFFER_VALID : ((mode == 'D' || mode == 'X') && frames > 1 ? NULL : pixels), 3, 2, sizeof(uint32_t) * 4);
     }
     trace("video_returned", frames);
     audio(10, -10);

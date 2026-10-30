@@ -1,7 +1,7 @@
 import
   std/[dynlib, math, os, strutils, tables],
   pixie,
-  ./[playerprofile, playervideo, playersave]
+  ./[playerformats, playerprofile, playervideo, playersave]
 
 const
   HeaderDirectory = currentSourcePath.parentDir / "../../third_party"
@@ -154,7 +154,11 @@ proc environment(command: cuint, data: pointer): bool {.cdecl.} =
         if format in [PixelRgb1555, PixelXrgb8888, PixelRgb565]:
           active.pixelFormat = format
           return true
-        active.failure = "Unsupported core pixel format: " & $format
+    of MonoRetroSetPixelFormat:
+      when cpuEndian == littleEndian:
+        if data != nil and cast[ptr uint32](data)[] == MonoRetroXbgr8888:
+          active.pixelFormat = PixelXbgr8888
+          return true
     of GetVariable:
       if data != nil:
         let variable = cast[ptr Variable](data)
