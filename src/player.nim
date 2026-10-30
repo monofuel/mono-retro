@@ -192,7 +192,7 @@ proc main() =
         let
           output = screen.window(index)
           size = output.framebufferSize
-        if output.minimized or size.x <= 0 or size.y <= 0: continue
+        if (desktop and output.minimized) or size.x <= 0 or size.y <= 0: continue
         var unchanged = false
         measured(ScreenSplit):
           unchanged = not desktop and canvases[index] != nil and
@@ -215,7 +215,7 @@ proc main() =
           output = screen.window(index)
           size = output.framebufferSize
           crop = composition.crops[index]
-        if size.x <= 0 or size.y <= 0 or output.minimized: continue
+        if size.x <= 0 or size.y <= 0 or (desktop and output.minimized): continue
         if crop.width == 0 or crop.height == 0:
           if black[index].width != size.x.int or black[index].height != size.y.int:
             black[index] = newImage(size.x.int, size.y.int)
@@ -364,19 +364,12 @@ proc main() =
           if pressed:
             overlayTransition(overlay.handleOverlay(command))
             break
-    var contactHeld = window.buttonDown[MouseLeft]
-    var contactX = window.mousePos.x.float32
-    var contactY = window.mousePos.y.float32
-    var contactOutput = inputScreen
-    if not desktop:
-      contactHeld = false
-      for contact in screen.touch.contacts:
-        if contact.active:
-          contactHeld = true
-          contactX = contact.x.float32
-          contactY = contact.y.float32
-          contactOutput = 1
-          break
+    let
+      contact = overlayContact(window, desktop, inputScreen, screen.touch.contacts)
+      contactHeld = contact.held
+      contactX = contact.x
+      contactY = contact.y
+      contactOutput = contact.output
     if overlay.isOpen and not noInput:
       if contactHeld:
         pointerX = contactX

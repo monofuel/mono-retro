@@ -1,6 +1,6 @@
 import
   paddy, windy,
-  ./anbernic
+  ./[anbernic, touch]
 
 const
   StickDpadThreshold* = 0.5'f32
@@ -13,6 +13,21 @@ const
     (KeyUp, 4), (KeyDown, 5), (KeyLeft, 6), (KeyRight, 7),
     (KeyX, 8), (KeyW, 9), (KeyQ, 1), (KeyA, 10), (KeyS, 11),
     (KeyPageUp, 12), (KeyPageDown, 13)]
+
+proc overlayContact*(window: Window, desktop: bool, inputScreen: int,
+    contacts: openArray[touch.TouchContact]): tuple[held: bool, x, y: float32, output: int] =
+  ## Select desktop mouse or native touch without querying unsupported window properties.
+  result.output = inputScreen
+  if desktop:
+    let position = window.mousePos
+    result.held = window.buttonDown[MouseLeft]
+    result.x = position.x.float32
+    result.y = position.y.float32
+  else:
+    for contact in contacts:
+      if contact.active:
+        result = (true, contact.x.float32, contact.y.float32, 1)
+        break
 
 proc firstGamepad*(pads: seq[Gamepad]): Gamepad =
   ## Select the lowest device ID, or return an empty input snapshot.

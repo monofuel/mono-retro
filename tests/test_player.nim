@@ -1,7 +1,22 @@
 import
   std/[math, os, strutils, tempfiles],
   paddy, pixie, windy,
-  retro/[anbernic, playerclock, playerinput, playersave, playervideo]
+  retro/[anbernic, playerclock, playerinput, playersave, playervideo, touch]
+
+block:
+  # Native touch must work without a desktop window or desktop property access.
+  let
+    noWindow: Window = nil
+    empty = overlayContact(noWindow, false, 0, [])
+    contacts = [touch.TouchContact(id: 1, x: 9, y: 12, active: false),
+      touch.TouchContact(id: 2, x: 600, y: 330, active: true),
+      touch.TouchContact(id: 3, x: 100, y: 200, active: true)]
+    pressed = overlayContact(noWindow, false, 0, contacts)
+  doAssert not empty.held and empty.output == 0
+  doAssert pressed.held and pressed.output == 1
+  doAssert pressed.x == 600 and pressed.y == 330
+  doAssert not overlayContact(noWindow, false, 1,
+    [touch.TouchContact(id: 2, active: false)]).held
 
 block:
   let
