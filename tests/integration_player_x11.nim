@@ -1,7 +1,14 @@
 import
-  std/[monotimes, os, osproc, strutils, tempfiles, times, uri],
+  std/[monotimes, os, osproc, streams, strutils, tempfiles, times, uri],
   vmath,
   windy/platforms/linux/x11/[x, xevent, xlib]
+
+proc testArguments(arguments: openArray[string]): seq[string] =
+  ## Keep synthetic runs offline and select the CPU or unsynchronized headless GPU path.
+  let mode = getEnv("MONO_RETRO_TEST_VIDEO", "cpu")
+  if mode notin ["cpu", "gpu"]: raise newException(ValueError, "Invalid test video mode")
+  result = @arguments
+  result.add(@["--video:" & mode, "--vsync:off", "--achievements:off"])
 
 proc queryTree(d: Display, window: Window, root, parent: ptr Window,
     children: ptr ptr UncheckedArray[Window], count: ptr cuint): cint
@@ -110,10 +117,10 @@ proc testDs(d: Display, directory: string) =
       layout = if separate: "separate" else: "combined"
     writeFile(rom, if mode == 5: "G" elif earthbound: "E" else: "N")
     putEnv("MONO_RETRO_FIXTURE_TRACE", trace)
-    let process = startProcess(absolutePath("build/mono-retro-player"), args = [
+    let process = startProcess(absolutePath("build/mono-retro-player"), args = testArguments([
       "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
       "--save-dir:" & directory / ("ds-save-" & $mode),
-      (if earthbound: "--earthbound-ds" else: "--ds-layout:" & layout)],
+      (if earthbound: "--earthbound-ds" else: "--ds-layout:" & layout)]),
       options = {poParentStreams})
     defer:
       if process.running(): process.terminate()
@@ -251,7 +258,7 @@ proc testStateDrops(d: Display, directory: string) =
       "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
       "--save-dir:" & saves, "--load-state:" & state]
     if dual: arguments.add("--earthbound-ds")
-    let process = startProcess(absolutePath("build/mono-retro-player"), args = arguments,
+    let process = startProcess(absolutePath("build/mono-retro-player"), args = testArguments(arguments),
       options = {poParentStreams})
     defer:
       if process.running(): process.terminate()
@@ -300,10 +307,10 @@ proc testAchievementOverlay(d: Display, directory: string) =
   writeFile(rom, "E")
   putEnv("MONO_RETRO_FIXTURE_TRACE", trace)
   putEnv("ALSOFT_DRIVERS", "null")
-  let process = startProcess(absolutePath("build/mono-retro-player"), args = [
+  let process = startProcess(absolutePath("build/mono-retro-player"), args = testArguments([
     "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
     "--save-dir:" & directory / "overlay-saves", "--earthbound-ds",
-    "--achievements:off", "--mute"], options = {poParentStreams})
+    "--achievements:off", "--mute"]), options = {poParentStreams})
   defer:
     if process.running(): process.terminate()
     discard process.waitForExit(5000)
@@ -362,8 +369,24 @@ proc testAchievementOverlay(d: Display, directory: string) =
 
 proc main() =
   ## Check presentation, input, pausing and shutdown on isolated Xvfb.
-  let
+  var
     testDisplay = getEnv("MONO_RETRO_TEST_DISPLAY")
+    server: Process
+  defer:
+    if server != nil:
+      if server.running: server.terminate()
+      discard server.waitForExit(5000)
+      server.close()
+  if testDisplay.len == 0:
+    let executable = findExe("Xvfb")
+    doAssert executable.len > 0, "Install Xvfb or set MONO_RETRO_TEST_DISPLAY to an isolated server."
+    server = startProcess(executable, args = ["-displayfd", "1", "-screen", "0",
+      "1920x1080x24", "+extension", "GLX", "-nolisten", "tcp"], options = {})
+    let number = server.outputStream.readLine().strip()
+    doAssert number.len > 0 and number.allCharsInSet({'0' .. '9'})
+    testDisplay = ":" & number
+    putEnv("LIBGL_ALWAYS_SOFTWARE", "1")
+  let
     legacyPlayer = getEnv("MONO_RETRO_LEGACY_PLAYER")
     directory = createTempDir("player-x11-", "")
     trace = directory / "trace"
@@ -379,9 +402,9 @@ proc main() =
   let d = openDisplay(testDisplay)
   defer: discard closeDisplay(d)
   block:
-    let process = startProcess(absolutePath("build/mono-retro-player"), args = [
+    let process = startProcess(absolutePath("build/mono-retro-player"), args = testArguments([
       "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
-      "--save-dir:" & directory / "audio-error"], options = {poParentStreams})
+      "--save-dir:" & directory / "audio-error"]), options = {poParentStreams})
     defer:
       if process.running(): process.terminate()
       discard process.waitForExit(5000)
@@ -399,7 +422,7 @@ proc main() =
     if mode == 2: arguments.add("--mute")
     let player = if mode == 4: absolutePath(legacyPlayer) else: absolutePath("build/mono-retro-player")
     let process = startProcess(player,
-      args = arguments, options = {poParentStreams})
+      args = (if mode == 4: arguments else: testArguments(arguments)), options = {poParentStreams})
     defer:
       if process.running(): process.terminate()
       discard process.waitForExit(5000)
@@ -463,9 +486,9 @@ proc main() =
       let saves = directory / ("melonds-" & layout)
       createDir(saves)
       copyFile(paramStr(3), saves / paramStr(2).splitFile.name & ".srm")
-      let process = startProcess(absolutePath("build/mono-retro-player"), args = [
+      let process = startProcess(absolutePath("build/mono-retro-player"), args = testArguments([
         "--core:" & absolutePath(paramStr(1)), "--rom:" & absolutePath(paramStr(2)),
-        "--save-dir:" & saves, "--ds-layout:" & layout, "--frames:180", "--achievements:off"],
+        "--save-dir:" & saves, "--ds-layout:" & layout, "--frames:180", "--achievements:off"]),
         options = {poParentStreams})
       defer:
         if process.running(): process.terminate()
@@ -487,8 +510,10 @@ proc main() =
         "--core:" & absolutePath(paramStr(1)), "--rom:" & absolutePath(paramStr(2)),
         "--save-dir:" & saves, "--frames:180", "--achievements:off"]
       if dual == 1: arguments.add("--earthbound-ds")
+      if dual == 1 and getEnv("MONO_RETRO_TEST_VIEWPORT").len > 0:
+        arguments.add("--earthbound-viewport:" & getEnv("MONO_RETRO_TEST_VIEWPORT"))
       if paramCount() == 4: arguments.add("--load-state:" & absolutePath(paramStr(4)))
-      let process = startProcess(absolutePath("build/mono-retro-player"), args = arguments,
+      let process = startProcess(absolutePath("build/mono-retro-player"), args = testArguments(arguments),
         options = {poParentStreams})
       defer:
         if process.running(): process.terminate()

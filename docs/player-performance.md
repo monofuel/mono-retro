@@ -21,6 +21,8 @@ Already implemented in the player or the Windy handheld fork:
 - Optional opaque XBGR negotiation and direct row capture, described below.
 - Paired Panfrost presentation on the source-kernel DS Plus: one native texture,
   GPU integer scaling, paired atomic updates and retained unchanged scanout.
+- X11 GPU textures with nearest integer scaling and double-buffered GLX vsync.
+  This removes desktop CPU scaling and unsynchronized `XPutImage` presentation.
 
 The core worker overlaps emulation with presentation, but the main thread still
 requests the next step and queues completed PCM. Display waits can therefore
@@ -32,6 +34,31 @@ Monofuel manually confirms the combined Decompbound/mono-retro-player build runs
 full speed flawlessly on the RG DS Plus with normal audio. This incorporates
 both the other agent's core optimizations and this frontend's GPU presentation.
 melonDS DS performance remains separate and needs its own profile.
+
+### Desktop X11 validation
+
+The X11 GPU path reuses native-size Pixie RGBA bytes, forces opaque output in
+the shader and retains unchanged textures. Both windows draw before swapping.
+The default requests GLX swap interval one; explicit `--video:cpu` and
+`--vsync:off` allow comparisons. GPU initialization failures remain visible.
+The native DRM path is unchanged.
+
+Verified on 2026-10-30 with shipped `-d:danger` player builds and checked tests:
+
+- Windy's private-Xvfb GL readback matches an independent pixel reference for
+  colours, opacity, crop orientation, integer borders, forced scales, modal
+  downscale, source-size changes, duplicate frames and independent contexts.
+- The player's full X11 fixture suite passes on CPU and GPU: displayed pixels,
+  independent resize, combined/separate DS, EarthBound, pointer/keyboard input,
+  focus pause, offline overlay, state drops, saves and shutdown.
+- Real Decompbound core playback from the private Winters state passes 180 paced
+  frames in single-screen and 336x256 expanded dual-screen mode with null audio.
+- Combined X11/fbdev/DRM compilation and native pixel-pair unit tests pass.
+
+These are correctness/pacing checks under software Mesa, with vsync disabled;
+they are not GPU performance measurements or proof of physical tear-free output.
+The desktop tearing retest is listed in Decompbound's `docs/human-verify.md`.
+No device, user-desktop playback, speaker output or achievement account is used.
 
 ## Reference measurements
 

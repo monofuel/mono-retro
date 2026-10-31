@@ -30,7 +30,7 @@ proc close*(display: Display) =
 
 proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480),
     windowTitles: seq[string] = @[], vsync = false,
-    windowSizes: seq[IVec2] = @[]): Display =
+    windowSizes: seq[IVec2] = @[], gpuPixels = false): Display =
   result = Display(backend: settings.displayBackend())
   let display = result
   let backend = case result.backend
@@ -46,7 +46,7 @@ proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480),
       elif backend == FbdevBackend: 1 else: max(1, settings.outputs.len)
     for index in 0 ..< count:
       var options = LinuxWindowOptions(rotation: settings.rotation,
-        touchRotation: settings.touchRotation)
+        touchRotation: settings.touchRotation, gpuPixels: gpuPixels)
       if backend == FbdevBackend: options.device = settings.framebuffer
       elif backend == DrmBackend:
         options.device = settings.drmDevice

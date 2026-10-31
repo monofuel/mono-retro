@@ -79,7 +79,7 @@ cd mono-retro
 nimby sync nimby.lock
 ```
 
-Desktop builds need libudev, libevdev, libX11, libXcursor, OpenAL Soft and
+Desktop builds need libudev, libevdev, libX11, libXcursor, OpenGL/GLX, OpenAL Soft and
 OpenSSL. The tester also uses ALSA for its tone. On NixOS, enter
 `nix-shell shell-player.nix` before building.
 

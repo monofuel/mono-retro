@@ -11,12 +11,15 @@ can be imported; state creation and ROM browsing are future work.
 Follow the [Nimby workspace setup](README.md#build), then build with
 `make player-desktop`. The project's `nimby.lock` pins all Nim dependencies,
 including the Windy GPU and Paddy controller-discovery forks. Native Linux
-dependencies are libudev, libevdev, libX11, libXcursor, OpenAL Soft and OpenSSL,
+dependencies are libudev, libevdev, libX11, libXcursor, OpenGL/GLX, OpenAL Soft and OpenSSL,
 plus a C compiler for the ABI bridge.
 
 For library development in a separate Windy worktree, set
 `MONO_RETRO_WINDY=/path/to/windy-checkout`. This overrides the locked Windy
-checkout for builds and checks; normal builds need no override.
+checkout for builds and checks. During development of X11 GPU presentation, use
+`MONO_RETRO_WINDY=../windy-gpu-player` in the shared local workspace; its ordinary
+`../windy` checkout is on an older, independent branch. Clean workspaces use the
+revision pinned by this project's lock file.
 
 On NixOS, the scoped development shell supplies native build/runtime libraries:
 
@@ -100,7 +103,7 @@ its callbacks, including initialization, saves and state imports. It computes at
 most one frame ahead while the main thread handles input, audio and presentation.
 Frame buffers transfer ownership between threads; duplicate video callbacks retain
 the displayed image. This overlap avoids adding display work to the emulation
-thread's frame budget. The software renderer
+thread's frame budget. The software capture path
 copies pitch-aware RGB565, XRGB8888 or 0RGB1555 frames, repeats duplicate frames,
 and scales by the largest whole-number factor that fits (1×, 2×, 3×, …), centered
 inside black borders. Pixels stay square; the core's display-aspect hint does not
@@ -108,17 +111,27 @@ stretch the image. The window starts at the core's native base resolution (for
 example, 240×160 for GBA). Below native size, the image remains at 1× and is
 center-cropped. Hardware rendering requests are unsupported.
 
-On the source-kernel DS Plus, `--video:auto` (the default) uses Panfrost for two
+On X11, `--video:auto` (the default) uploads native-size images into persistent
+OpenGL textures. The GPU scales and crops them with nearest filtering, and GLX
+swaps double buffers with vsync enabled. This replaces unsynchronized CPU
+`XPutImage` uploads. Both windows draw before swapping; resizing redraws even
+when the core repeats its previous frame. No additional channel conversion is
+introduced. This accelerates presentation of software cores, not core rendering.
+`--vsync:off` is available for diagnostics and isolated Xvfb tests; it permits
+tearing. Startup reports the selected path and fails if requested GLX swap
+control is unavailable. Physical tear-free behavior still needs manual checking.
+
+On the source-kernel DS Plus, `--video:auto` uses Panfrost for two
 unrotated DRM outputs. One native-size texture feeds both screens, with GPU
 nearest-neighbour integer scaling, black borders and one paired atomic commit.
 Old storage is retained until both controllers complete. Single-screen games
 keep the other output black and L2 swaps them. Duplicate callbacks and identical
-fresh frames retain scanout without another upload. X11, fbdev and stock-kernel
+fresh frames retain scanout without another upload. fbdev and stock-kernel
 CPU playback keep their existing paths.
 
 `--video:cpu` selects the existing path for comparison/recovery; `--video:gpu`
-requires the paired path. Selection is at startup. GPU initialization errors are
-reported rather than silently switching renderers. GPU playback requires Mesa's
+requires X11 GPU windows or the paired DRM path. Selection is at startup. GPU initialization errors are
+reported rather than silently switching renderers. DRM GPU playback requires Mesa's
 hardware driver, libgbm, libEGL and libGLESv2, loaded only when requested. It needs
 no X11/Wayland server. Frames still use Pixie capture: standard libretro XRGB is
 converted on the worker, while the private XBGR path avoids that conversion.
@@ -127,7 +140,7 @@ CPU DRM playback requests synchronized presentation from Windy.
 Each screen uses two buffers and switches at vblank, avoiding writes
 into the currently visible buffer. Uploads wait for the previous switch before
 reusing its storage; the frame clock still sets the emulation rate. This requires
-the fork's DRM page-flip support. X11 and fbdev retain their existing presentation.
+the fork's DRM page-flip support. CPU X11 and fbdev use unsynchronized uploads.
 
 `--frames:N` exits after N emulated frames for bounded tests. Window close,
 SIGINT and SIGTERM also save and exit.
@@ -138,8 +151,9 @@ The optional `--earthbound-viewport:WIDTHxHEIGHT` selects the game panel size
 (width 256–1024, height 224–1024; default 256x224). The Party panel remains
 256x224. Desktop windows start at 2x, or use `--earthbound-scale:N` to start
 the Game window at an exact integer scale; `auto` uses the largest integer that
-fits on resize. Party scales independently. A forced scale requires CPU video
-and rejects a window too small to display it. Both options require
+fits on resize. Party scales independently. A forced scale works with X11 GPU
+or CPU video and rejects a window too small to display it. Native forced-scale
+experiments still use CPU video. Both options require
 `--earthbound-ds`.
 
 With decompbound's dual-screen core, add `--earthbound-ds` to the normal player
@@ -405,17 +419,15 @@ The XRGB8888 conversion uses ARM64 NEON where available and a scalar loop elsewh
 retaining padded and unaligned row support. Scaling clears only black borders
 before overwriting the image interior, reducing memory traffic. Native dual-screen playback compares each panel with its
 last displayed pixels and retains unchanged scanout, avoiding redundant scaling
-and uploads. Changed pixels and resized outputs redraw. X11 continues presenting
-every frame so expose/focus/resize handling does not depend on retained scanout.
+and uploads. Changed pixels and resized outputs redraw. X11 GPU retains unchanged
+textures and redraws for crop changes, resize and restoration of hidden windows.
 
 ## Validation
 
 ```sh
 make check test test-player
-Xvfb :97 -screen 0 1600x1200x24 -nolisten tcp &
-xvfbPid=$!
-MONO_RETRO_TEST_DISPLAY=:97 make test-player-x11
-kill "$xvfbPid"
+make test-player-x11
+MONO_RETRO_TEST_VIDEO=gpu make test-player-x11
 ```
 
 Set `MONO_RETRO_LEGACY_PLAYER` to an older player executable when running the
@@ -423,9 +435,11 @@ X11 integration test to additionally verify private-format rejection and
 standard XRGB8888 fallback against that host. The normal suite checks the new
 private format, colour readback, duplicates and dual-screen presentation.
 
-Use an unused isolated display large enough for the combined DS resize test
-(778 pixels high); the integration test refuses to run without
-`MONO_RETRO_TEST_DISPLAY`. It checks displayed pixels, letterboxing on resize,
+The integration test starts its own isolated Xvfb by default, or accepts an
+existing isolated server via `MONO_RETRO_TEST_DISPLAY`. It never selects the
+user's desktop automatically. CPU is the default test path; the GPU run uses
+software Mesa and `--vsync:off` because Xvfb has no physical refresh to synchronize.
+Tests disable achievements and use temporary saves. They check displayed pixels, letterboxing on resize,
 keyboard events, focus pause, save files and clean Escape/SIGTERM exits. Automated
 audio playback uses OpenAL Soft's null backend, so tests do not play sounds on
 the desktop. The X11 test also checks initialization failure cleanup and muted
@@ -457,8 +471,7 @@ With separately obtained mGBA and Mother 3 working copies:
 ```sh
 nim r -o:build/integration-player-mgba tests/integration_player_mgba.nim \
   build/cores/mgba_libretro.so 'build/player-test/Mother 3 (English v1.3).gba'
-# While an isolated Xvfb is running:
-MONO_RETRO_TEST_DISPLAY=:97 build/integration-player-x11 \
+build/integration-player-x11 \
   build/cores/mgba_libretro.so 'build/player-test/Mother 3 (English v1.3).gba'
 ```
 

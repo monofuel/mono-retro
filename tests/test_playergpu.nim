@@ -3,14 +3,17 @@ import
   retro/playergpu
 
 suite "GPU player presentation":
-  test "automatic GPU use requires the proven native capabilities":
+  test "automatic GPU use selects X11 or the proven native capabilities":
     check useGpuVideo(AutoVideo, "drm", 2, 0, true)
     check not useGpuVideo(AutoVideo, "drm", 2, 0, false)
-    check not useGpuVideo(AutoVideo, "x11", 2, 0, true)
+    check useGpuVideo(AutoVideo, "x11", 2, 0, true)
+    check useGpuVideo(AutoVideo, "x11", 1, 0, false)
+    check not useGpuVideo(CpuVideo, "x11", 2, 0, true)
     check not useGpuVideo(AutoVideo, "fbdev", 1, 90, true)
     check not useGpuVideo(CpuVideo, "drm", 2, 0, true)
     check useGpuVideo(GpuVideo, "drm", 2, 0, false)
-    expect ValueError: discard useGpuVideo(GpuVideo, "x11", 2, 0, true)
+    check useGpuVideo(GpuVideo, "x11", 2, 0, true)
+    expect ValueError: discard useGpuVideo(GpuVideo, "x11", 3, 0, true)
     expect ValueError: discard useGpuVideo(GpuVideo, "drm", 2, 90, true)
   test "DS and companion panels stay in one combined source":
     check playerCrops(256, 384, 256, 192, 1, true) ==

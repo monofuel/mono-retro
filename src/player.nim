@@ -14,7 +14,8 @@ const
   ModalRedrawNs = 16_666_667'i64
   Help = """Usage: mono-retro-player --core:PATH --rom:PATH --save-dir:DIR [--frames:N] [--mute] [--load-state:PATH]
 Libretro player with Slappy audio. --mute opens no audio device.
---video:auto|cpu|gpu selects native presentation; auto uses paired Panfrost outputs.
+--video:auto|cpu|gpu selects presentation; auto uses X11 textures or paired Panfrost outputs.
+--vsync:on|off controls X11 GPU swaps (default on); off is for diagnostics.
 --no-input requires --frames and feeds neutral controls for repeatable benchmarks.
 --load-state:PATH is a startup-only CLI import of a core-defined format.
 Desktop: drop a state file onto a window.
@@ -45,6 +46,7 @@ proc main() =
     limit = 0'u64
     muted = false
     videoMode = AutoVideo
+    vsync = true
     noInput = false
     dsLayout = NoDsLayout
     earthboundDs = false
@@ -68,6 +70,11 @@ proc main() =
       statePath = value
     of "mute": muted = true
     of "video": videoMode = parseVideoMode(value)
+    of "vsync":
+      case value
+      of "on": vsync = true
+      of "off": vsync = false
+      else: raise newException(ValueError, "Expected --vsync:on|off")
     of "no-input": noInput = true
     of "ra-config":
       if value.len == 0: raise newException(ValueError, "Missing achievement config path")
@@ -112,6 +119,7 @@ proc main() =
   let dual = selectDualScreen(dsLayout, earthboundDs, viewportWidth, viewportHeight)
   var settings = parseSettings(displayArguments, detectDevice())
   let desktop = settings.displayBackend() == "x11"
+  let desktopGpu = desktop and videoMode != CpuVideo
   validateDsDisplay(dual.layout, settings.displayBackend(), settings.outputs.len)
   let session = openCoreWorker(corePath, romPath, saveDirectory, captureAudio = not muted,
     options = dual.options, statePath = statePath,
@@ -138,14 +146,14 @@ proc main() =
           ivec2(sizes[1].width.int32, sizes[1].height.int32)]
       else: newSeq[IVec2]()
     screen = openDisplay(settings,
-      initialSize, windowTitles, vsync = settings.displayBackend() == "drm",
-      windowSizes = windowSizes)
+      initialSize, windowTitles, vsync = settings.displayBackend() == "drm" or (desktopGpu and vsync),
+      windowSizes = windowSizes, gpuPixels = desktopGpu)
   defer: screen.close()
   validateDsDisplay(dual.layout, settings.displayBackend(), screen.count())
-  if earthboundDs and gameScale > 0 and videoMode == GpuVideo:
+  if not desktop and earthboundDs and gameScale > 0 and videoMode == GpuVideo:
     raise newException(ValueError, "Explicit EarthBound scale requires CPU video")
-  let gpu = openPlayerGpu(if earthboundDs and gameScale > 0: CpuVideo else: videoMode,
-    screen, settings)
+  let gpu = openPlayerGpu(if not desktop and earthboundDs and gameScale > 0: CpuVideo else: videoMode,
+    screen, settings, gameScale)
   defer: gpu.close()
   var
     activeScreen = screen.count() - 1
@@ -169,7 +177,9 @@ proc main() =
   echo "Save: ", session.savePath
   if statePath.len > 0: echo "State: ", statePath
   echo "Audio: ", (if muted: "muted" else: "Slappy"), "; core rate: ", session.av.timing.fps
-  echo "Presentation: ", (if gpu == nil: "CPU" else: "GPU paired atomic")
+  echo "Presentation: ", (if gpu == nil: "CPU"
+    elif desktop: "X11 GPU textures; vsync " & (if vsync: "on" else: "off")
+    else: "GPU paired atomic")
   var
     clock = newFrameClock(session.av.timing.fps, getMonoTime().ticks)
     fps = session.av.timing.fps
@@ -212,7 +222,8 @@ proc main() =
     if gpu != nil:
       measured(Presentation):
         gpu.presentComposition(composition.sourceImage, composition.crops,
-          composition.revision, composition.changed)
+          composition.revision, composition.changed,
+          if composition.modal: composition.uiOutput else: -1)
     elif not composition.modal and dual.layout == SeparateDs and composition.sourceImage != nil:
       for index in 0 .. 1:
         let
