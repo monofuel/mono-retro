@@ -20,6 +20,7 @@ Libretro player with Slappy audio. --mute opens no audio device.
 --load-state:PATH is a startup-only CLI import of a core-defined format.
 Desktop: drop a state file onto a window.
 Arrows: D-pad. X/Z: A/B. A/S: L/R. PageUp/PageDown: L2/R2. Enter: Start. Backspace: Select.
+Hold controller R2 or keyboard Tab for up to 4x fast-forward with audio muted.
 F1 or MENU/Home opens achievements; B/Escape returns. Escape outside the menu exits.
 --achievements:on|off (default on); --ra-config:PATH overrides the private token file.
 Sign in with mono-retro-ra login. Only Casual achievements are supported.
@@ -187,6 +188,8 @@ proc main() =
     canvases = newSeq[Image](screen.count())
     dsImages: array[2, Image]
     paused = false
+    fastForwarding = false
+    pendingVideoChange = false
     exitHeld = false
     exitStarted: MonoTime
     stylus: DsStylus
@@ -214,7 +217,8 @@ proc main() =
     ## Compose optional UI without writing into worker-owned core frames.
     composition = overlay.composeOverlay(session.image, session.videoFrames,
       overlayDisplay, dual.layout != NoDsLayout, dual.panelWidth,
-      dual.panelHeight, activeScreen, session.imageChanged and not overlay.isOpen, dual.geometry)
+      dual.panelHeight, activeScreen,
+      (session.imageChanged or pendingVideoChange) and not overlay.isOpen, dual.geometry)
     let
       modalNow = if desktop and composition.modal: getMonoTime().ticks else: 0'i64
       refreshModal = desktop and composition.modal and
@@ -274,6 +278,7 @@ proc main() =
         blanked[index] = false
       if desktop and composition.modal and (composition.changed or refreshModal):
         lastModalPresentation = modalNow
+    pendingVideoChange = false
   proc overlayTransition(action: OverlayAction) =
     ## Quiesce prefetched work before opening and discard modal input on return.
     if action in {OverlayOpened, OverlayClosed}:
@@ -367,11 +372,13 @@ proc main() =
     var held: set[Button]
     for (key, button) in KeyboardButtons:
       if window.buttonDown[key]: held.incl key
-    let gameButtons = keyboardButtons(held) or gamepadButtons(pads)
+    if window.buttonDown[KeyTab]: held.incl KeyTab
+    let controls = playerControls(held, pads)
     var controlsHeld = gamepadButtons(pads) != 0 or pad.button(GamepadHome)
     for index in 0 ..< screen.count():
       let target = screen.window(index)
-      controlsHeld = controlsHeld or target.buttonDown[KeyF1] or target.buttonDown[KeyEscape]
+      controlsHeld = controlsHeld or target.buttonDown[KeyF1] or target.buttonDown[KeyEscape] or
+        target.buttonDown[KeyTab]
       for (key, button) in KeyboardButtons:
         controlsHeld = controlsHeld or target.buttonDown[key]
     if not controlsHeld:
@@ -422,6 +429,13 @@ proc main() =
     if not contactHeld: suppressPointer = false
     collectAchievements()
     overlay.updateOverlay(now.ticks)
+    let fastForwardRequested = not noInput and not suppressButtons and
+      not overlay.isOpen and (not desktop or focusedIndex >= 0) and
+      size.x > 0 and size.y > 0 and controls.fastForward
+    if fastForwardRequested != fastForwarding:
+      fastForwarding = fastForwardRequested
+      clock = newFrameClock(fps, now.ticks, fastForwarding)
+      if sound != nil: sound.reset()
     if now.ticks - lastAchievementIdle >= AchievementIdleNs and
         (overlay.isOpen or paused or (desktop and focusedIndex < 0)):
       let withList = overlay.isOpen and now.ticks - lastAchievementList >= AchievementListNs
@@ -455,7 +469,7 @@ proc main() =
       let remainingMs = int((clock.deadline - now.ticks) div NanosecondsPerMillisecond)
       measured(Waiting): sleep(min(PollIntervalMs, remainingMs))
       continue
-    var buttons = if suppressButtons: 0'u16 else: gameButtons
+    var buttons = if suppressButtons: 0'u16 else: controls.buttons
     if not desktop and dual.layout == NoDsLayout and screen.count() > 1:
       buttons = buttons and not (1'u16 shl 12)
     var pointerInput = if dual.layout == SeparateDs and not desktop:
@@ -478,21 +492,26 @@ proc main() =
       pointerInput = PointerInput()
     if suppressPointer: pointerInput = PointerInput()
     session.step(buttons, pointerInput, compareVideo = gpu != nil)
+    pendingVideoChange = pendingVideoChange or session.imageChanged
     # At most one core frame overlaps presentation. Controls are sampled again
     # on each main-loop iteration; the core and all its callbacks stay serialized.
     if not session.shutdown and (limit == 0 or session.frames < limit):
       when defined(playerWalkBenchmark): buttons = benchmarkButtons(session.frames)
       session.prefetch(buttons, pointerInput)
     if sound != nil:
-      measured(AudioOutput): sound.submit(session.takeAudio(), session.av.timing.sampleRate)
+      let samples = session.takeAudio()
+      if not fastForwarding:
+        measured(AudioOutput): sound.submit(samples, session.av.timing.sampleRate)
     if dual.layout != NoDsLayout and session.image != nil:
       validateDualGeometry(session.image.width, session.image.height, dual.geometry)
     collectAchievements()
     overlay.updateOverlay(getMonoTime().ticks)
-    presentOverlay()
+    # Retain synchronized swaps at the normal display rate while every core frame runs.
+    if not fastForwarding or session.frames mod FastForwardMultiplier.uint64 == 0:
+      presentOverlay()
     if session.av.timing.fps != fps:
       fps = session.av.timing.fps
-      clock = newFrameClock(fps, getMonoTime().ticks)
+      clock = newFrameClock(fps, getMonoTime().ticks, fastForwarding)
     clock.advance(getMonoTime().ticks)
   session.pause()
   echo "Frames: ", session.frames, "; video: ", session.videoFrames,

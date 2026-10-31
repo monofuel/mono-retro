@@ -467,6 +467,19 @@ proc main() =
     d.XFlush()
     waitFrames(trace, paused + 3)
     doAssert readFile(trace).contains("input=0\n")
+    if mode == 0:
+      let beforeFast = frameCount(trace)
+      key(d, window, 0xff09, true)
+      sleep(400)
+      let fastFrames = frameCount(trace) - beforeFast
+      doAssert lastValue(trace, "input") == 0, "Fast-forward key leaked into core controls"
+      key(d, window, 0xff09, false)
+      waitFrames(trace, frameCount(trace) + 3)
+      let beforeNormal = frameCount(trace)
+      sleep(400)
+      let normalFrames = frameCount(trace) - beforeNormal
+      doAssert normalFrames in 12 .. 36, "Normal pacing did not resume"
+      doAssert fastFrames > normalFrames * 2, "Holding fast-forward did not accelerate emulation"
     if mode == 1: process.terminate()
     else: key(d, window, 0xff1b, true)
     doAssert process.waitForExit(5000) == 0

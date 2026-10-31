@@ -82,6 +82,7 @@ hotkeys, and cores with no state support still work normally without this option
 | Enter / Backspace | Start / Select |
 | Escape | Save and exit |
 | F1 / controller Menu or Home | Pause and browse achievements |
+| Hold controller R2 / Tab | Fast-forward up to 4×; release for normal speed |
 
 The achievement browser consumes Escape/B to return. See
 [RetroAchievements setup](docs/retroachievements.md) for the login helper and
@@ -94,6 +95,12 @@ axis. Digital D-pad input takes precedence on the same axis. The right stick
 does not move the D-pad. Keyboard and controller buttons
 combine. Unplugging the controller removes its held buttons. Device-specific
 mapping remains an application concern.
+
+R2 is reserved by the player for fast-forward instead of reaching the core.
+Fast-forward runs every emulated frame and presents every fourth frame, keeping
+vsync enabled. Actual speed depends on the core and hardware. Audio is muted
+while held and reprimes at normal speed on release. Focus loss and the paused
+achievement browser stop fast-forward. Page Down still supplies the core's R2.
 
 Desktop emulation pauses while the window is unfocused or minimized. On resume the
 clock starts from the current time. Frames follow the core's reported rate
@@ -175,8 +182,9 @@ use integer scaling and centering: 768×672 (3×) on 1024×768 displays. EarthBo
 targets 2× and above; original DS-size 1× layouts are outside its MVP.
 
 The core draws party HP/PP and browsable inventory. Tap/click a card or use
-**L2/R2** (**Page Up/Page Down** on keyboard) to choose a character. These
-triggers reach the core instead of swapping physical displays. Gameplay
+**L2** / **Page Up** for the previous character and **Page Down** for the next.
+Touch can select any card; controller R2 instead fast-forwards. L2 reaches the
+core instead of swapping physical displays. Gameplay
 controls keep working; item use and battle commands remain in the game menus.
 Only lower-panel touches inside the scaled image reach the companion. The
 existing first-contact touch policy, focus pause, audio, SRAM persistence and

@@ -6,6 +6,7 @@ const
   StickDpadThreshold* = 0.5'f32
   HorizontalDpad = (1'u16 shl 6) or (1'u16 shl 7)
   VerticalDpad = (1'u16 shl 4) or (1'u16 shl 5)
+  RetroR2 = 1'u16 shl 13
   RetroButtons* = [GamepadA, GamepadX, GamepadSelect, GamepadStart,
     GamepadUp, GamepadDown, GamepadLeft, GamepadRight, GamepadB, GamepadY,
     GamepadL1, GamepadR1, GamepadL2, GamepadR2, GamepadL3, GamepadR3]
@@ -56,3 +57,10 @@ proc keyboardButtons*(held: set[Button]): uint16 =
   ## Map the desktop's documented keyboard controls to the same RetroPad.
   for (key, button) in KeyboardButtons:
     if key in held: result = result or (1'u16 shl button)
+
+proc playerControls*(held: set[Button], pads: seq[Gamepad]):
+    tuple[buttons: uint16, fastForward: bool] =
+  ## Reserve controller R2 and keyboard Tab for held fast-forward, keeping Page Down as core R2.
+  let buttons = gamepadButtons(pads)
+  result.buttons = keyboardButtons(held) or (buttons and not RetroR2)
+  result.fastForward = (buttons and RetroR2) != 0 or KeyTab in held

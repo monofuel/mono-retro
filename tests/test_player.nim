@@ -129,6 +129,32 @@ block:
   doAssert gamepadButtons(@[]) == 0
 
 block:
+  let
+    r2 = Gamepad(id: 0, buttons: (1'u64 shl GamepadR2.int) or (1'u64 shl GamepadB.int))
+    controls = playerControls({}, @[r2])
+  doAssert controls.fastForward and controls.buttons == 1'u16 shl 8
+  doAssert playerControls({KeyTab}, @[]).fastForward
+  doAssert playerControls({KeyTab}, @[]).buttons == 0
+  doAssert not playerControls({}, @[]).fastForward
+  doAssert not playerControls({}, @[r2, Gamepad(id: -1)]).fastForward
+  doAssert playerControls({KeyPageDown}, @[]).buttons == 1'u16 shl 13
+  doAssert not playerControls({KeyPageDown}, @[]).fastForward
+  let native = mapAnbernic(Gamepad(id: 0, name: "ANBERNIC-rk3568-keys",
+    buttons: 1'u64 shl GamepadStart.int))
+  doAssert playerControls({}, @[native]).fastForward
+  doAssert playerControls({}, @[native]).buttons == 0
+
+block:
+  var fast = newFrameClock(60, 123, fastForward = true)
+  let normal = newFrameClock(60, 123)
+  doAssert fast.period == int64(1_000_000_000.0 / 240)
+  doAssert fast.period < normal.period
+  fast.advance(123)
+  doAssert fast.deadline == 123 + fast.period
+  fast = newFrameClock(60, 999)
+  doAssert fast.period == normal.period and fast.deadline == 999
+
+block:
   var clock = newFrameClock(59.7275, 100)
   doAssert clock.period == int64(1_000_000_000.0 / 59.7275)
   clock.advance(100)
