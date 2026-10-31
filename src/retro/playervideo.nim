@@ -14,11 +14,14 @@ const
   PixelXbgr8888* = int(MonoRetroXbgr8888)
   MaxFrameDimension = 8192
 
-proc frameViewport*(sourceWidth, sourceHeight, width, height: int): FrameViewport =
+proc frameViewport*(sourceWidth, sourceHeight, width, height: int, forcedScale = 0): FrameViewport =
   ## Share integer scaling and crop offsets between rendering and pointer input.
   if min(sourceWidth, sourceHeight) <= 0 or min(width, height) <= 0:
     raise newException(ValueError, "Invalid viewport dimensions")
-  result.scale = max(1, min(width div sourceWidth, height div sourceHeight))
+  if forcedScale < 0 or (forcedScale > 0 and
+      (width div sourceWidth < forcedScale or height div sourceHeight < forcedScale)):
+    raise newException(ValueError, "Window is too small for the requested scale")
+  result.scale = if forcedScale > 0: forcedScale else: max(1, min(width div sourceWidth, height div sourceHeight))
   result.left = (width - sourceWidth * result.scale) div 2
   result.top = (height - sourceHeight * result.scale) div 2
 
@@ -63,7 +66,7 @@ proc copyFrame*(previous: Image, data: pointer, width, height, pitch: int,
         b = uint8((blue shl 3) or (blue shr 2))
       result.data[y * width + x] = rgbx(r, g, b, 255)
 
-proc fitFrame*(source, previous: Image, width, height: int): Image =
+proc fitFrame*(source, previous: Image, width, height: int, forcedScale = 0): Image =
   ## Center whole-number pixel scaling, clipping at native size if necessary.
   if width <= 0 or height <= 0:
     raise newException(ValueError, "Invalid presentation dimensions")
@@ -76,7 +79,7 @@ proc fitFrame*(source, previous: Image, width, height: int): Image =
   let
     sourcePixels = cast[ptr UncheckedArray[ColorRGBX]](unsafeAddr source.data[0])
     targetPixels = cast[ptr UncheckedArray[ColorRGBX]](addr result.data[0])
-    viewport = frameViewport(source.width, source.height, width, height)
+    viewport = frameViewport(source.width, source.height, width, height, forcedScale)
     scale = viewport.scale
     viewWidth = source.width * scale
     left = viewport.left

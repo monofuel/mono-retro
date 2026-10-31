@@ -134,16 +134,30 @@ SIGINT and SIGTERM also save and exit.
 
 ## EarthBound DS companion
 
+The optional `--earthbound-viewport:WIDTHxHEIGHT` selects the game panel size
+(width 256–1024, height 224–1024; default 256x224). The Party panel remains
+256x224. Desktop windows start at 2x, or use `--earthbound-scale:N` to start
+the Game window at an exact integer scale; `auto` uses the largest integer that
+fits on resize. Party scales independently. A forced scale requires CPU video
+and rejects a window too small to display it. Both options require
+`--earthbound-ds`.
+
 With decompbound's dual-screen core, add `--earthbound-ds` to the normal player
 command. This preset enables `decompbound_dual_screen=enabled` and requires a
-256×448 software frame: two stacked 256×224 panels. It cannot be combined with
+256×448 software frame by default: two stacked 256×224 panels. With a custom
+`W×H` viewport, the frame is `W×(H+224)`, with the 256×224 Party crop centered
+below the game and black padding on its sides. The core must support the
+viewport options for non-default sizes. The preset cannot be combined with
 `--ds-layout`, which retains its melonDS-specific options and geometry.
 
-On X11, **Game** and **Party** windows start at 512×448 (2×) and resize
-independently. On the RG DS Plus, use the ordinary `player-rg-ds-plus` build
-with `--device:rg-ds-plus --earthbound-ds`; Game goes to DSI-1 and Party/touch
-to DSI-2. Both panels use the existing integer scaling and centering. On
-1024×768 displays the panels are 768×672 (3×) with black borders. EarthBound DS
+On X11, the default **Game** and **Party** windows start at 512×448 (2×) and
+resize independently. Custom game dimensions change only the Game window's
+initial size. Expanded terrain is an experimental desktop prototype; see
+decompbound's `docs/expanded-viewport.md` for its scene coverage and test commands.
+For the existing handheld mode, use the ordinary `player-rg-ds-plus` build with
+`--earthbound-ds` and the device profile matching the installed kernel. The
+profile selects the two physical outputs. At default dimensions, both panels
+use integer scaling and centering: 768×672 (3×) on 1024×768 displays. EarthBound DS
 targets 2× and above; original DS-size 1× layouts are outside its MVP.
 
 The core draws party HP/PP and browsable inventory. Tap/click a card or use

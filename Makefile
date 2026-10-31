@@ -104,6 +104,7 @@ test-player: player-fixtures prepare-lost-in-blue-tool
 	nim r -o:build/test-playercore tests/test_playercore.nim
 	ALSOFT_DRIVERS=null nim r -o:build/test-playeraudio tests/test_playeraudio.nim
 	nim r -o:build/test-playerds tests/test_playerds.nim
+	nim r -o:build/test-earthbound-viewport tests/test_earthbound_viewport.nim
 	nim r -o:build/test-playerstate tests/test_playerstate.nim
 	nim r -o:build/test-playerworker tests/test_playerworker.nim
 	nim r -o:build/test-playergpu tests/test_playergpu.nim

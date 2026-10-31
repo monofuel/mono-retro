@@ -23,7 +23,8 @@ F1 or MENU/Home opens achievements; B/Escape returns. Escape outside the menu ex
 --achievements:on|off (default on); --ra-config:PATH overrides the private token file.
 Sign in with mono-retro-ra login. Only Casual achievements are supported.
 The first connected gamepad uses RetroPad positions.
-DS: --ds-layout:combined|separate. EarthBound: --earthbound-ds. W/Q: X/Y.
+DS: --ds-layout:combined|separate. EarthBound: --earthbound-ds
+  [--earthbound-viewport:WIDTHxHEIGHT] [--earthbound-scale:auto|N]. W/Q: X/Y.
 Mouse or native touch: lower or Party screen. The two presets cannot be combined.
 Native DS and EarthBound DS require two DRM outputs and separate screens.
 Hold Select+Start for two seconds to exit. L2 swaps screens for single-screen games.
@@ -47,6 +48,10 @@ proc main() =
     noInput = false
     dsLayout = NoDsLayout
     earthboundDs = false
+    viewportWidth = EarthboundWidth
+    viewportHeight = EarthboundHeight
+    gameScale = 0
+    earthboundOptions = false
     achievementsEnabled = true
     raConfigPath: string
     displayArguments = @["--device:auto"]
@@ -77,14 +82,26 @@ proc main() =
         raise newException(ValueError, "--earthbound-ds cannot be combined with --ds-layout")
       dsLayout = parseDsLayout(value)
     of "earthbound-ds":
+      if value.len > 0: raise newException(ValueError, "--earthbound-ds takes no value")
       if dsLayout != NoDsLayout:
         raise newException(ValueError, "--earthbound-ds cannot be combined with --ds-layout")
       earthboundDs = true
+    of "earthbound-viewport":
+      let viewport = parseEarthboundViewport(value)
+      viewportWidth = viewport.width
+      viewportHeight = viewport.height
+      earthboundOptions = true
+    of "earthbound-scale":
+      let scale = parseEarthboundScale(value)
+      gameScale = if scale.autoScale: 0 else: scale.scale
+      earthboundOptions = true
     of "device", "display": displayArguments.add("--" & key & ":" & value)
     of "frames":
       limit = parseBiggestUInt(value)
       if limit == 0: raise newException(ValueError, "Frame limit must be positive")
     else: raise newException(ValueError, "Unknown player option: " & key)
+  if earthboundOptions and not earthboundDs:
+    raise newException(ValueError, "--earthbound-viewport and --earthbound-scale require --earthbound-ds")
   if corePath.len == 0 or romPath.len == 0 or saveDirectory.len == 0:
     raise newException(ValueError, Help)
   if noInput and limit == 0:
@@ -92,7 +109,7 @@ proc main() =
   when defined(playerWalkBenchmark):
     if limit == 0: raise newException(ValueError, "Walking benchmark requires --frames")
     if noInput: raise newException(ValueError, "Walking benchmark cannot use --no-input")
-  let dual = selectDualScreen(dsLayout, earthboundDs)
+  let dual = selectDualScreen(dsLayout, earthboundDs, viewportWidth, viewportHeight)
   var settings = parseSettings(displayArguments, detectDevice())
   let desktop = settings.displayBackend() == "x11"
   validateDsDisplay(dual.layout, settings.displayBackend(), settings.outputs.len)
@@ -101,8 +118,7 @@ proc main() =
     raConfigPath = raConfigPath, achievementsEnabled = achievementsEnabled)
   defer: session.close()
   if dual.layout != NoDsLayout:
-    validateDsFrame(session.av.geometry.baseWidth.int, session.av.geometry.baseHeight.int,
-      dual.panelWidth, dual.panelHeight)
+    validateDualGeometry(session.av.geometry.baseWidth.int, session.av.geometry.baseHeight.int, dual.geometry)
   settings.title = "mono-retro-player | " & session.libraryName & " | " &
     romPath.extractFilename & (if muted: " | MUTED" else: "")
   let
@@ -115,11 +131,21 @@ proc main() =
         ivec2(int32(dual.panelWidth * dual.desktopScale),
           int32(dual.panelHeight * dual.desktopScale))
       else: ivec2(session.av.geometry.baseWidth.int32, session.av.geometry.baseHeight.int32)
+    windowSizes = if desktop and earthboundDs:
+        let sizes = desktopWindowSizes(dual.geometry.game, dual.geometry.companion,
+          if gameScale > 0: gameScale else: EarthboundDesktopScale, EarthboundDesktopScale)
+        @[ivec2(sizes[0].width.int32, sizes[0].height.int32),
+          ivec2(sizes[1].width.int32, sizes[1].height.int32)]
+      else: newSeq[IVec2]()
     screen = openDisplay(settings,
-      initialSize, windowTitles, vsync = settings.displayBackend() == "drm")
+      initialSize, windowTitles, vsync = settings.displayBackend() == "drm",
+      windowSizes = windowSizes)
   defer: screen.close()
   validateDsDisplay(dual.layout, settings.displayBackend(), screen.count())
-  let gpu = openPlayerGpu(videoMode, screen, settings)
+  if earthboundDs and gameScale > 0 and videoMode == GpuVideo:
+    raise newException(ValueError, "Explicit EarthBound scale requires CPU video")
+  let gpu = openPlayerGpu(if earthboundDs and gameScale > 0: CpuVideo else: videoMode,
+    screen, settings)
   defer: gpu.close()
   var
     activeScreen = screen.count() - 1
@@ -178,7 +204,7 @@ proc main() =
     ## Compose optional UI without writing into worker-owned core frames.
     composition = overlay.composeOverlay(session.image, session.videoFrames,
       overlayDisplay, dual.layout != NoDsLayout, dual.panelWidth,
-      dual.panelHeight, activeScreen, session.imageChanged and not overlay.isOpen)
+      dual.panelHeight, activeScreen, session.imageChanged and not overlay.isOpen, dual.geometry)
     let
       modalNow = if desktop and composition.modal: getMonoTime().ticks else: 0'i64
       refreshModal = desktop and composition.modal and
@@ -198,15 +224,16 @@ proc main() =
           unchanged = not desktop and canvases[index] != nil and
             canvases[index].width == size.x.int and canvases[index].height == size.y.int and
             sameDsScreen(composition.sourceImage, dsImages[index], index,
-              dual.panelWidth, dual.panelHeight)
+              dual.geometry)
           if not unchanged:
             dsImages[index] = dsScreen(composition.sourceImage, dsImages[index], index,
-              dual.panelWidth, dual.panelHeight)
+              dual.geometry)
         if unchanged:
           when defined(playerTimings): inc reusedScreens[index]
           continue
         measured(Scaling):
-          canvases[index] = fitFrame(dsImages[index], canvases[index], size.x.int, size.y.int)
+          canvases[index] = fitFrame(dsImages[index], canvases[index], size.x.int, size.y.int,
+            if earthboundDs and index == 0: gameScale else: 0)
         measured(Presentation): output.presentPixels(canvases[index])
         blanked[index] = false
     else:
@@ -230,7 +257,8 @@ proc main() =
         if not redraw and not refreshModal and not (desktop and not composition.modal): continue
         if redraw or (desktop and not composition.modal):
           measured(Scaling):
-            canvases[index] = composition.fitComposition(index, size.x.int, size.y.int, canvases[index])
+            canvases[index] = composition.fitComposition(index, size.x.int, size.y.int, canvases[index],
+              if earthboundDs and index == 0: gameScale else: 0)
         measured(Presentation): output.presentPixels(canvases[index])
         blanked[index] = false
       if desktop and composition.modal and (composition.changed or refreshModal):
@@ -421,11 +449,11 @@ proc main() =
       buttons = buttons and not (1'u16 shl 12)
     var pointerInput = if dual.layout == SeparateDs and not desktop:
         nativeDsPointer(stylus, screen.touch.contacts, screen.width(1), screen.height(1),
-          dual.panelWidth, dual.panelHeight)
+          dual.geometry)
       elif dual.layout != NoDsLayout:
         dsPointer(dual.layout, inputScreen, size.x.int, size.y.int,
           window.mousePos.x.int, window.mousePos.y.int, window.buttonDown[MouseLeft],
-          dual.panelWidth, dual.panelHeight)
+          dual.geometry)
       else: PointerInput()
     if earthboundDs:
       let held = if desktop: inputScreen == 1 and window.buttonDown[MouseLeft]
@@ -447,7 +475,7 @@ proc main() =
     if sound != nil:
       measured(AudioOutput): sound.submit(session.takeAudio(), session.av.timing.sampleRate)
     if dual.layout != NoDsLayout and session.image != nil:
-      validateDsFrame(session.image.width, session.image.height, dual.panelWidth, dual.panelHeight)
+      validateDualGeometry(session.image.width, session.image.height, dual.geometry)
     collectAchievements()
     overlay.updateOverlay(getMonoTime().ticks)
     presentOverlay()

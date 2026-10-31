@@ -29,7 +29,8 @@ proc close*(display: Display) =
     raise newException(IOError, errors.join("; "))
 
 proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480),
-    windowTitles: seq[string] = @[], vsync = false): Display =
+    windowTitles: seq[string] = @[], vsync = false,
+    windowSizes: seq[IVec2] = @[]): Display =
   result = Display(backend: settings.displayBackend())
   let display = result
   let backend = case result.backend
@@ -56,14 +57,15 @@ proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480),
           raise newException(IOError, "Expected exactly one touchscreen: " & settings.touchName)
         options.touchDevice = paths[0]
       let title = if windowTitles.len > 0: windowTitles[index] else: settings.title
-      let window = newWindow(title, initialSize, vsync = vsync,
+      let size = if index < windowSizes.len: windowSizes[index] else: initialSize
+      let window = newWindow(title, size, vsync = vsync,
         linuxOptions = options)
       display.windows.add window
-      let size = window.framebufferSize
+      let framebufferSize = window.framebufferSize
       if index == 1:
         display.touch = TouchState(enabled: options.touchDevice.len > 0,
-          multitouch: true, minimumX: 0, maximumX: size.x - 1,
-          minimumY: 0, maximumY: size.y - 1)
+          multitouch: true, minimumX: 0, maximumX: framebufferSize.x - 1,
+          minimumY: 0, maximumY: framebufferSize.y - 1)
         window.onTouch = proc(event: TouchEvent) =
           var found = -1
           for index, contact in display.touch.contacts:

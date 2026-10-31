@@ -3,7 +3,7 @@
 import
   std/math,
   pixie,
-  ./[overlayui, playervideo, ra_types]
+  ./[overlayui, playergeometry, playervideo, ra_types]
 
 export overlayui.OverlayPanelWidth, overlayui.OverlayPanelHeight,
   overlayui.OverlayRows, overlayui.OverlayRect, overlayui.OverlayLayout
@@ -38,6 +38,7 @@ type
     display: OverlayDisplay
     stacked: bool
     panelWidth, panelHeight, active, width, height: int
+    geometry: DualGeometry
   OverlayState* = ref object
     ui: OverlayUi
     snapshot: RaSnapshot
@@ -237,22 +238,20 @@ proc copyRegion(source, target: Image, crop: OverlayCrop, x, y: int) =
       crop.width * sizeof(ColorRGBX))
 
 proc normalCrops(image: Image, display: OverlayDisplay, stacked: bool,
-    panelWidth, panelHeight, active: int): OverlayCrops =
+    panelWidth, panelHeight, active: int, geometry: DualGeometry): OverlayCrops =
   ## Preserve the normal combined/separate/active-screen presentation contract.
   if image == nil: return
   if display == OverlaySeparate and stacked:
-    if panelWidth <= 0 or panelHeight <= 0 or image.width != panelWidth or
-        image.height != panelHeight * 2:
-      raise newException(ValueError, "Invalid stacked overlay source geometry")
-    result[0] = (0, 0, panelWidth, panelHeight)
-    result[1] = (0, panelHeight, panelWidth, panelHeight)
+    let actual = if geometry.frameWidth > 0: geometry else: stackedGeometry(panelWidth, panelHeight)
+    validateDualGeometry(image.width, image.height, actual)
+    result = actual.dualCrops()
   else:
     let output = if display == OverlaySeparate: active else: 0
     result[output] = (0, 0, image.width, image.height)
 
 proc composeOverlay*(state: OverlayState, coreImage: Image, coreSequence: uint64,
     display: OverlayDisplay, stacked = false, panelWidth = 0, panelHeight = 0,
-    active = 0, changed = true): OverlayComposition =
+    active = 0, changed = true, geometry = DualGeometry()): OverlayComposition =
   ## Borrow normal frames directly and compose UI only into owned reusable images.
   if active notin 0 .. 1:
     raise newException(ValueError, "Invalid active overlay output")
@@ -261,7 +260,7 @@ proc composeOverlay*(state: OverlayState, coreImage: Image, coreSequence: uint64
     height = if coreImage == nil: 0 else: coreImage.height
     key = CompositionKey(display: display, stacked: stacked,
       panelWidth: panelWidth, panelHeight: panelHeight, active: active,
-      width: width, height: height)
+      width: width, height: height, geometry: geometry)
     source = cast[pointer](coreImage)
     coreChanged = not state.composed or
       ((source != state.lastSource or coreSequence != state.lastCoreSequence) and changed)
@@ -277,8 +276,9 @@ proc composeOverlay*(state: OverlayState, coreImage: Image, coreSequence: uint64
   result.changed = redraw
   if state.opened:
     if state.frozenGame == nil and coreImage != nil:
-      let gameHeight = if stacked: panelHeight else: height
-      if gameHeight <= 0 or gameHeight > height or (stacked and panelWidth != width):
+      let gameHeight = if stacked and geometry.frameHeight > 0: geometry.game.height
+        elif stacked: panelHeight else: height
+      if gameHeight <= 0 or gameHeight > height or (stacked and geometry.frameWidth == 0 and panelWidth != width):
         raise newException(ValueError, "Invalid modal game crop")
       state.frozenGame = newImage(width, gameHeight)
       copyRegion(coreImage, state.frozenGame, (0, 0, width, gameHeight), 0, 0)
@@ -318,7 +318,7 @@ proc composeOverlay*(state: OverlayState, coreImage: Image, coreSequence: uint64
         result.crops[0] = (0, 0, atlasWidth, gameHeight + OverlayPanelHeight)
         result.uiOutput = 0
   else:
-    result.crops = normalCrops(coreImage, display, stacked, panelWidth, panelHeight, active)
+    result.crops = normalCrops(coreImage, display, stacked, panelWidth, panelHeight, active, geometry)
     result.sourceImage = coreImage
     if state.noticeActive and coreImage != nil:
       if redraw:
@@ -358,13 +358,15 @@ proc compositionScreen*(composition: OverlayComposition, index: int,
   copyRegion(composition.sourceImage, result, crop, 0, 0)
 
 proc fitComposition*(composition: OverlayComposition, index, width, height: int,
-    previous: Image = nil): Image =
+    previous: Image = nil, forcedScale = 0): Image =
   ## Fit readable UI into small desktop windows while preserving integer game scaling.
   if width <= 0 or height <= 0:
     raise newException(ValueError, "Overlay output dimensions must be positive")
   let image = composition.compositionScreen(index)
+  if forcedScale > 0 and image != nil:
+    discard frameViewport(image.width, image.height, width, height, forcedScale)
   if not composition.modal or image == nil or (image.width <= width and image.height <= height):
-    return fitFrame(image, previous, width, height)
+    return fitFrame(image, previous, width, height, forcedScale)
   let
     scale = min(width.float64 / image.width.float64, height.float64 / image.height.float64)
     scaled = image.resize(max(1, int(image.width.float64 * scale)),
