@@ -94,6 +94,41 @@ proc main() =
     red = rgbx(255, 0, 0, 255)
     green = rgbx(0, 255, 0, 255)
 
+  block existingScreenstates:
+    let path = directory / "existing.png"
+    writeFile(path, "previous screenstate")
+    doAssert writeNewSave(path, "first new capture") == directory / "existing_2.png"
+    doAssert writeNewSave(path, "second new capture") == directory / "existing_3.png"
+    doAssert readFile(path) == "previous screenstate"
+    doAssert readFile(directory / "existing_2.png") == "first new capture"
+    doAssert readFile(directory / "existing_3.png") == "second new capture"
+
+  block screenstateArchive:
+    for name in ["Decompbound", "mGBA"]:
+      let
+        archive = directory / name / "Pictures" / "Screenshots"
+        writer = openCaptureWriter(directory / name / "sessions", rom, core, name, "1",
+          screenstateDirectory = archive)
+        state = if name == "Decompbound": DbStPrefix else: "opaque-state"
+      writer.beginSegment(state)
+      writer.recordInput(0, PointerInput())
+      writer.capture(imageOf(red), reason = "auto")
+      writer.capture(imageOf(red), state, "manual")
+      writer.capture(imageOf(green), state, "exit")
+      writer.capture(imageOf(red), reason = "manual")
+      writer.close()
+      doAssert pngs(writer.directory).len == 4
+      let archived = pngs(archive)
+      doAssert archived.len == 2, "Only manual and exit screenstates belong in the archive"
+      for path in archived:
+        let contents = readFile(path)
+        doAssert contents == readFile(writer.directory / path.extractFilename)
+        if name == "Decompbound":
+          doAssert chunkPayload(contents, "ebSt").startsWith("EBSS")
+        else:
+          doAssert unwrapScreenstate(contents, romHash, coreHash) == state
+      doAssert readReplay(writer.directory / "segment_0001.json").inputs.len == 1
+
   block sparseReplay:
     let writer = openCaptureWriter(directory / "sparse", rom, core, "mGBA", "1")
     doAssert dirExists(writer.directory)

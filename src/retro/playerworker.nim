@@ -17,7 +17,7 @@ type
     kind: CommandKind
     core, rom, saves, state, contents, source: string
     raConfigPath: string
-    captureRoot, replayPath: string
+    captureRoot, screenstateDirectory, replayPath: string
     options: seq[CoreOption]
     captureAudio, achievementsEnabled, withList, withState: bool
     buttons: uint16
@@ -127,7 +127,8 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
       stateExport = session.stateSize() > 0
       if config.captureRoot.len > 0:
         writer = openCaptureWriter(config.captureRoot, config.rom, config.core,
-          $session.info.libraryName, $session.info.libraryVersion, config.options)
+          $session.info.libraryName, $session.info.libraryVersion, config.options,
+          config.screenstateDirectory)
         if stateExport: writer.beginSegment(session.exportState())
       runtime = newRaRuntime(config.raConfigPath, config.achievementsEnabled,
         session.supportsAchievements(), session.originalRomPath(), session.originalRomData(),
@@ -272,7 +273,8 @@ proc close*(worker: CoreWorker) =
 
 proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = false,
     options: seq[CoreOption] = @[], statePath = "", raConfigPath = "",
-    achievementsEnabled = false, captureDirectory = "", replayPath = ""): CoreWorker =
+    achievementsEnabled = false, captureDirectory = "", replayPath = "",
+    screenstateDirectory = ""): CoreWorker =
   ## Load a software core on its dedicated thread with one bounded frame in flight.
   result = CoreWorker(mailbox: cast[ptr Mailbox](allocShared0(sizeof(Mailbox))))
   result.mailbox.commands.open(1)
@@ -281,7 +283,8 @@ proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = fa
   var config = Command(kind: Configure, core: owned(corePath), rom: owned(romPath),
     saves: owned(saveDirectory), state: owned(statePath), captureAudio: captureAudio,
     raConfigPath: owned(raConfigPath), achievementsEnabled: achievementsEnabled,
-    captureRoot: owned(captureDirectory), replayPath: owned(replayPath))
+    captureRoot: owned(captureDirectory), replayPath: owned(replayPath),
+    screenstateDirectory: owned(screenstateDirectory))
   when defined(raTesting):
     config.raHttpTestHandler = workerRaHttpTestHandler
   for option in options: config.options.add((owned(option.key), owned(option.value)))

@@ -21,3 +21,28 @@ proc writeSave*(path, contents: string) =
     moveFile(temporary, path)
   finally:
     if fileExists(temporary): removeFile(temporary)
+
+proc writeNewSave*(path, contents: string): string =
+  ## Write a new private capture, choosing a suffix without overwriting existing files.
+  let parts = path.splitFile()
+  var
+    suffix = 1
+    descriptor: cint
+  while true:
+    result = if suffix == 1: path
+      else: parts.dir / (parts.name & "_" & $suffix & parts.ext)
+    descriptor = posix.open(result.cstring, O_WRONLY or O_CREAT or O_EXCL, Mode(0o600))
+    if descriptor >= 0: break
+    let error = osLastError()
+    if error != OSErrorCode(EEXIST): raiseOSError(error, result)
+    inc suffix
+  var file: File
+  if not file.open(descriptor, fmWrite):
+    let error = osLastError()
+    discard posix.close(descriptor)
+    raiseOSError(error, result)
+  try:
+    file.write(contents)
+    file.flushSaveFile()
+  finally:
+    file.close()

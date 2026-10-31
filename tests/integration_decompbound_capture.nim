@@ -12,12 +12,14 @@ proc main() =
     raise newException(ValueError, "Usage: integration_decompbound_capture CORE ROM STATE_PNG")
   let
     directory = createTempDir("decompbound-capture-", "")
+    archive = directory / "Pictures" / "Screenshots"
     options: seq[CoreOption] = @[("decompbound_dual_screen", "enabled")]
   defer: removeDir(directory)
   var expected: seq[tuple[video, audio: uint32]]
   let live = openCoreWorker(absolutePath(paramStr(1)), absolutePath(paramStr(2)),
     directory / "live", captureAudio = true, options = options,
-    statePath = absolutePath(paramStr(3)), captureDirectory = directory / "captures")
+    statePath = absolutePath(paramStr(3)), captureDirectory = directory / "captures",
+    screenstateDirectory = archive)
   let sessionDirectory = live.captureDirectory
   var capturedState: string
   for frame in 0 ..< Frames:
@@ -37,6 +39,13 @@ proc main() =
   for path in walkFiles(sessionDirectory / "*.png"):
     if parseFile(path.changeFileExt("json"))["reason"].getStr == "manual": manual = path
   doAssert segment.len > 0 and manual.len > 0
+  let archivedManual = archive / manual.extractFilename
+  doAssert readFile(archivedManual) == readFile(manual)
+  var archivedCount = 0
+  for path in walkFiles(archive / "*.png"):
+    inc archivedCount
+    doAssert readFile(path) == readFile(sessionDirectory / path.extractFilename)
+  doAssert archivedCount == 2
   let recording = readReplay(segment)
   doAssert recording.inputs.len == Frames
   doAssert recording.checkpoint.startsWith("DBST")
@@ -56,7 +65,7 @@ proc main() =
   doAssert index == Frames and replay.exportState() == finalState
   replay.close()
   let resumed = openCoreWorker(absolutePath(paramStr(1)), absolutePath(paramStr(2)),
-    directory / "resumed", options = options, statePath = manual)
+    directory / "resumed", options = options, statePath = archivedManual)
   doAssert resumed.exportState() == capturedState
   resumed.close()
   echo "EarthBound dual-screen capture, per-frame pixels/PCM and final state matched."

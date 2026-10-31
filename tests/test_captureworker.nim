@@ -18,7 +18,8 @@ proc main() =
   defer: removeDir(directory)
   writeFile(rom, "V")
   let worker = openCoreWorker(core, rom, directory / "saves",
-    captureAudio = true, captureDirectory = directory / "captures")
+    captureAudio = true, captureDirectory = directory / "captures",
+    screenstateDirectory = directory / "Pictures" / "Screenshots")
   doAssert worker.stateExport
   let sessionDirectory = worker.captureDirectory
   worker.step(0)
@@ -70,6 +71,12 @@ proc main() =
         doAssert image.data[0] == rgbx(0, 255, 0, 255)
       else: doAssert state == secondEnd
   doAssert pngs == 4 and embedded == 3
+  var archived = 0
+  for path in walkFiles(directory / "Pictures" / "Screenshots" / "*.png"):
+    inc archived
+    doAssert readFile(path) == readFile(sessionDirectory / path.extractFilename)
+    doAssert readFile(path).contains("mrSt")
+  doAssert archived == 3
   doAssert foundFrameTwo and foundDuplicate
   for index, path in recordings:
     let replay = openCoreWorker(core, rom, directory / ("replay-" & $index),

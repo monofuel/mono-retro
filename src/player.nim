@@ -22,6 +22,7 @@ Libretro player with Slappy audio. --mute opens no audio device.
 Desktop: drop a state file onto a window.
 F12 or controller Share captures a resumable screenstate (including both screens).
 Captures: periodic screenshots every 5s, input recording, and a final exit screenstate.
+F12 and exit screenstates also appear in ~/Pictures/Screenshots/.
 --capture-dir:DIR overrides SAVE_DIR/captures; --captures:off disables capture/recording.
 --replay:SEGMENT.json restores and replays a recorded segment with matching core/options.
 Arrows: D-pad. X/Z: A/B. A/S: L/R. PageUp/PageDown: L2/R2. Enter: Start. Backspace: Select.
@@ -140,6 +141,7 @@ proc main() =
     if limit == 0: raise newException(ValueError, "Walking benchmark requires --frames")
     if noInput: raise newException(ValueError, "Walking benchmark cannot use --no-input")
   let dual = selectDualScreen(dsLayout, earthboundDs, viewportWidth, viewportHeight)
+  let screenstateDirectory = getHomeDir() / "Pictures" / "Screenshots"
   var settings = parseSettings(displayArguments, detectDevice())
   let desktop = settings.displayBackend() == "x11"
   let desktopGpu = desktop and videoMode != CpuVideo
@@ -147,7 +149,8 @@ proc main() =
   let session = openCoreWorker(corePath, romPath, saveDirectory, captureAudio = not muted,
     options = dual.options, statePath = statePath,
     raConfigPath = raConfigPath, achievementsEnabled = achievementsEnabled,
-    captureDirectory = (if capturesEnabled: captureDirectory else: ""), replayPath = replayPath)
+    captureDirectory = (if capturesEnabled: captureDirectory else: ""), replayPath = replayPath,
+    screenstateDirectory = screenstateDirectory)
   defer: session.close()
   if dual.layout != NoDsLayout:
     validateDualGeometry(session.av.geometry.baseWidth.int, session.av.geometry.baseHeight.int, dual.geometry)
@@ -201,6 +204,7 @@ proc main() =
   echo "Save: ", session.savePath
   if session.captureDirectory.len > 0:
     echo "Captures: ", session.captureDirectory
+    echo "Screenstates: ", screenstateDirectory
     if not session.stateExport:
       echo "Core has no state export: only image captures are available; input recording is disabled."
   if statePath.len > 0: echo "State: ", statePath
@@ -406,7 +410,7 @@ proc main() =
     if capturePressed and session.captureDirectory.len > 0:
       try:
         session.capture()
-        echo "Screenstate queued in ", session.captureDirectory
+        echo "Screenstate queued in ", screenstateDirectory
       except CatchableError as error:
         stderr.writeLine("Screenstate capture failed: " & error.msg)
     var held: set[Button]

@@ -30,6 +30,7 @@ type
   CaptureJob = object
     stop: bool
     path, sidecarPath, sidecar, state, romHash, coreHash, contents: string
+    screenstatePath: string
     image: Image
     kind: CaptureKind
     romCrc: uint32
@@ -38,6 +39,7 @@ type
     errors: Channel[string]
   CaptureWriter* = ref object
     directory*: string
+    screenstateDirectory: string
     romHash, coreHash, coreName, coreVersion: string
     options: seq[tuple[key, value: string]]
     romCrc: uint32
@@ -249,6 +251,9 @@ proc writeShot(job: CaptureJob) =
   let png = embedPng(job.image.encodeImage(PngFormat), job)
   writeSave(job.path, png)
   writeSave(job.sidecarPath, job.sidecar)
+  if job.screenstatePath.len > 0:
+    createDir(job.screenstatePath.parentDir)
+    discard writeNewSave(job.screenstatePath, png)
 
 proc writeCaptures(mailbox: ptr CaptureMailbox) {.thread.} =
   ## Compress and write queued screenshots without blocking the caller.
@@ -396,7 +401,7 @@ proc startWriter(writer: CaptureWriter) =
     raise
 
 proc openCaptureWriter*(root, romPath, corePath, coreName, coreVersion: string;
-    options: seq[tuple[key, value: string]] = @[]): CaptureWriter =
+    options: seq[tuple[key, value: string]] = @[], screenstateDirectory = ""): CaptureWriter =
   ## Create a unique session directory with ROM/core identity metadata.
   if not fileExists(romPath):
     raise newException(IOError, "Missing ROM: " & romPath)
@@ -406,6 +411,7 @@ proc openCaptureWriter*(root, romPath, corePath, coreName, coreVersion: string;
   createDir(captureRoot)
   result = CaptureWriter(
     directory: createTempDir("session-", "", captureRoot),
+    screenstateDirectory: screenstateDirectory,
     coreName: coreName,
     coreVersion: coreVersion,
     decompbound: coreName.toLowerAscii == "decompbound"
@@ -484,6 +490,8 @@ proc capture*(writer: CaptureWriter, image: Image, state = "", reason = "manual"
   job.path = owned(path)
   job.sidecarPath = owned(path.changeFileExt("json"))
   job.sidecar = owned(writer.sidecarJson(reason, path.extractFilename, job.state.len > 0))
+  if writer.screenstateDirectory.len > 0 and job.state.len > 0 and reason in ["manual", "exit"]:
+    job.screenstatePath = owned(writer.screenstateDirectory / path.extractFilename)
   writer.mailbox.jobs.send(move(job))
 
 proc close*(writer: CaptureWriter) =

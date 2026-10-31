@@ -88,8 +88,14 @@ new recording segment. Recording includes every emulated frame during fast-forwa
 not just frames presented on screen, and includes pointer input.
 
 Sessions live under `SAVE_DIR/captures/`; the player prints the full session path.
+F12/controller Share and orderly-exit screenstates also appear in
+`~/Pictures/Screenshots/`, matching the standalone Decompbound player. These are
+byte-identical copies with the embedded state intact; session originals and
+replay sidecars stay together. Existing files are preserved by adding a numeric
+suffix on a name collision. Five-second plain screenshots remain session-only.
 Use `--capture-dir:DIR` to choose another location or `--captures:off` to disable
-capture and recording for benchmarks. PNG compression and disk writes run on a
+capture and recording for benchmarks; `--capture-dir` changes the session root,
+while screenstates still appear in the Pictures folder. PNG compression and disk writes run on a
 separate writer thread; the core's state is copied between frames on its owner thread.
 Exit waits for queued writes to finish. Cores without state export retain plain
 image captures, but cannot produce screenstates or replay recordings.
