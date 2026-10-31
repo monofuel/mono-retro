@@ -213,7 +213,7 @@ viewport options for non-default sizes. The preset cannot be combined with
 
 On X11, the default **Game** and **Party** windows start at 512×448 (2×) and
 resize independently. Custom game dimensions change only the Game window's
-initial size. Expanded terrain is an experimental desktop prototype; see
+initial size. Expanded terrain remains experimental; see
 decompbound's `docs/expanded-viewport.md` for its scene coverage and test commands.
 For the existing handheld mode, use the ordinary `player-rg-ds-plus` build with
 `--earthbound-ds` and the device profile matching the installed kernel. The
@@ -230,8 +230,11 @@ Only lower-panel touches inside the scaled image reach the companion. The
 existing first-contact touch policy, focus pause, audio, SRAM persistence and
 either-window exit behavior apply.
 
-Use a separate `--save-dir` for testing. The existing launcher entry and
-installed handheld wrappers are unchanged. Decompbound's
+Use a separate `--save-dir` for testing. On 2026-10-31, the RG DS Plus
+Decompbound test wrappers were updated to 336x256 with player `eb6e273` and
+core `82e1285`, retaining automatic GPU/integer scaling and the existing Jeff
+startup state. Silent loader/core checks passed; physical-screen acceptance
+and sustained performance remain manual checks. Decompbound's
 `docs/earthbound-ds.md` documents its build/run targets and physical checks.
 
 ## Lost in Blue with melonDS DS on X11
