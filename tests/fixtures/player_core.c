@@ -160,8 +160,46 @@ bool retro_load_game(const struct retro_game_info *game)
 }
 void retro_unload_game(void) { trace("unload", 1); }
 #ifndef FULLPATH
+enum { FIXTURE_STATE_MAGIC = 0x31545346u };
+struct fixture_state {
+    uint32_t magic;
+    unsigned frames;
+    unsigned char memory[sizeof(memory)];
+#ifdef RA_FIXTURE
+    unsigned char system_memory[sizeof(system_memory)];
+#endif
+};
+size_t retro_serialize_size(void) { return sizeof(struct fixture_state); }
+bool retro_serialize(void *data, size_t size)
+{
+    if (!data || size < sizeof(struct fixture_state)) return false;
+    /* Force a recording failure only after an otherwise accepted import. */
+    if (mode == 'J' && memory[4] == 42) return false;
+    struct fixture_state state;
+    memset(&state, 0, sizeof(state));
+    state.magic = FIXTURE_STATE_MAGIC;
+    state.frames = frames;
+    memcpy(state.memory, memory, sizeof(memory));
+#ifdef RA_FIXTURE
+    memcpy(state.system_memory, system_memory, sizeof(system_memory));
+#endif
+    memcpy(data, &state, sizeof(state));
+    return true;
+}
 bool retro_unserialize(const void *data, size_t size)
 {
+    if (data && size == sizeof(struct fixture_state)) {
+        struct fixture_state state;
+        memcpy(&state, data, size);
+        if (state.magic != FIXTURE_STATE_MAGIC) return false;
+        frames = state.frames;
+        memcpy(memory, state.memory, sizeof(memory));
+#ifdef RA_FIXTURE
+        memcpy(system_memory, state.system_memory, sizeof(system_memory));
+#endif
+        trace("binary_state_loaded", frames);
+        return true;
+    }
     const char expected[] = "fixture-state";
     if (!data || size != sizeof(expected) - 1 || memcmp(data, expected, size)) return false;
     frames = 0;

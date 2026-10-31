@@ -1,7 +1,7 @@
 import
-  std/monotimes,
+  std/[monotimes, os, sha1],
   pixie,
-  ./[libretro, playerprofile, ra_client, ra_types]
+  ./[libretro, playercapture, playerprofile, ra_client, ra_types]
 
 when defined(raTesting):
   import ./ra_http
@@ -12,13 +12,14 @@ when defined(raTesting):
 
 type
   CommandKind = enum
-    Configure, Step, Save, ImportState, IdleAchievements, Stop
+    Configure, Step, Save, ImportState, ExportState, Capture, IdleAchievements, Stop
   Command = object
     kind: CommandKind
     core, rom, saves, state, contents, source: string
     raConfigPath: string
+    captureRoot, replayPath: string
     options: seq[CoreOption]
-    captureAudio, achievementsEnabled, withList: bool
+    captureAudio, achievementsEnabled, withList, withState: bool
     buttons: uint16
     pointerInput: PointerInput
     reusable: Image
@@ -27,6 +28,10 @@ type
   Reply = object
     error: string
     libraryName, libraryVersion, savePath: string
+    captureDirectory: string
+    contents: string
+    stateExport: bool
+    stateImported: bool
     av: AvInfo
     image: Image
     audio: seq[int16]
@@ -43,10 +48,13 @@ type
     mailbox: ptr Mailbox
     thread: Thread[ptr Mailbox]
     pending, ready: bool
+    fatalError: string
     reply: Reply
     reusable: Image
     audio: seq[int16]
     libraryName*, libraryVersion*, savePath*: string
+    captureDirectory*: string
+    stateExport*: bool
     av*: AvInfo
     image*: Image
     frames*, videoFrames*, audioFrames*: uint64
@@ -88,25 +96,55 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
     var
       session: CoreSession
       runtime: RaRuntime
+      writer: CaptureWriter
+      replay: ReplayRecording
+      replaying = false
+      replayCursor = 0
+      romHash, coreHash: string
+      stateExport = false
     try:
       let config = mailbox.commands.recv()
       when defined(raTesting):
         setRaHttpTestHandler(config.raHttpTestHandler)
+      romHash = $secureHashFile(config.rom)
+      coreHash = $secureHashFile(config.core)
+      var initialState: string
+      if config.replayPath.len > 0:
+        replay = readReplay(config.replayPath)
+        replaying = true
+        if replay.romHash != romHash or replay.coreHash != coreHash:
+          raise newException(IOError, "Replay ROM or core build does not match")
+        if replay.options != config.options:
+          raise newException(IOError, "Replay requires the same core options")
+        initialState = replay.checkpoint
+      elif config.state.len > 0:
+        if getFileSize(config.state) > 64 * 1024 * 1024:
+          raise newException(IOError, "State file exceeds supported size")
+        initialState = unwrapScreenstate(readFile(config.state), romHash, coreHash)
       session = openCore(config.core, config.rom, config.saves,
         captureAudio = config.captureAudio, options = config.options,
-        statePath = config.state)
+        statePath = config.state, stateData = initialState)
+      stateExport = session.stateSize() > 0
+      if config.captureRoot.len > 0:
+        writer = openCaptureWriter(config.captureRoot, config.rom, config.core,
+          $session.info.libraryName, $session.info.libraryVersion, config.options)
+        if stateExport: writer.beginSegment(session.exportState())
       runtime = newRaRuntime(config.raConfigPath, config.achievementsEnabled,
         session.supportsAchievements(), session.originalRomPath(), session.originalRomData(),
         session.achievementMemoryProvider())
       var reply = Reply(libraryName: $session.info.libraryName,
         libraryVersion: $session.info.libraryVersion, savePath: owned(session.savePath),
-        av: session.av)
+        av: session.av, stateExport: stateExport,
+        captureDirectory: (if writer != nil: owned(writer.directory) else: ""),
+        shutdown: replaying and replay.inputs.len == 0)
       reply.captureAchievements(runtime)
       mailbox.replies.send(move(reply))
     except CatchableError as error:
       var message = "Core worker: " & error.msg & "\n" & error.getStackTrace()
       try:
-        closeOwned(runtime, session)
+        try:
+          if writer != nil: writer.close()
+        finally: closeOwned(runtime, session)
       except CatchableError as cleanupError:
         message.add("\nCore cleanup: " & cleanupError.msg)
       mailbox.replies.send(Reply(error: message))
@@ -122,31 +160,57 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
           let
             previousVideoFrames = session.videoFrames
             started = getMonoTime().ticks
-          session.step(command.buttons, command.pointerInput)
+          let input = if replaying: replay.inputs[replayCursor]
+            else: ReplayInput(buttons: command.buttons, pointerInput: command.pointerInput)
+          if writer != nil and stateExport: writer.recordInput(input.buttons, input.pointerInput)
+          session.step(input.buttons, input.pointerInput)
+          if replaying: inc replayCursor
           runtime.frame()
           reply.coreTicks = getMonoTime().ticks - started
           reply.av = session.av
           reply.frames = session.frames
           reply.videoFrames = session.videoFrames
           reply.audioFrames = session.audioFrames
-          reply.shutdown = session.shutdown
+          reply.shutdown = session.shutdown or (replaying and replayCursor >= replay.inputs.len)
           # A duplicate callback must retain the displayed frame, not publish the
           # older recycled buffer. Keep that buffer here for the next fresh frame.
           if session.videoFrames != previousVideoFrames: reply.image = move(session.image)
           reply.audio = session.takeAudio()
         of Save: session.save()
         of ImportState:
-          session.importStateData(command.contents, command.source)
+          if replaying: raise newException(IOError, "State drops are disabled during replay")
+          session.importStateData(unwrapScreenstate(command.contents, romHash, coreHash), command.source)
+          reply.stateImported = true
+          reply.av = session.av
+          if writer != nil and stateExport: writer.beginSegment(session.exportState())
           runtime.resetProgress()
           runtime.refreshMemory()
-          reply.av = session.av
+        of ExportState: reply.contents = session.exportState()
+        of Capture:
+          if writer == nil: raise newException(IOError, "Captures are disabled")
+          if command.withState and not stateExport:
+            raise newException(IOError, "Core does not support screenstates")
+          writer.capture(command.reusable,
+            (if command.withState: session.exportState() else: ""), command.source)
         of IdleAchievements: runtime.idle()
-        of Stop: closeOwned(runtime, session)
+        of Stop:
+          try:
+            if writer != nil:
+              try:
+                if command.reusable != nil:
+                  writer.capture(command.reusable,
+                    (if stateExport: session.exportState() else: ""), "exit")
+              finally: writer.close()
+          finally: closeOwned(runtime, session)
         of Configure: raise newException(ValueError, "Core already configured")
         if command.kind != Stop:
           reply.captureAchievements(runtime, command.withList)
       except CatchableError as error:
-        reply.error = "Core worker: " & error.msg & "\n" & error.getStackTrace()
+        if command.kind == ImportState and reply.stateImported:
+          reply.shutdown = true
+          reply.error = "State restored, but recording or achievement reset failed: "
+        else: reply.error = "Core worker: "
+        reply.error.add(error.msg & "\n" & error.getStackTrace())
       mailbox.replies.send(move(reply))
       if command.kind == Stop: break
 
@@ -171,26 +235,33 @@ proc finishPending(worker: CoreWorker) =
     worker.pending = false
     worker.ready = true
 
-proc request(worker: CoreWorker, command: Command): Reply =
+proc request(worker: CoreWorker, command: Command, checkResult = true): Reply =
   ## Serialize state/save operations after any in-flight core call.
   worker.finishPending()
   worker.mailbox.commands.send(command)
   result = worker.mailbox.replies.recv()
   worker.acceptAchievements(result)
-  result.checked()
+  if checkResult: result.checked()
+
+proc snapshotImage(worker: CoreWorker): Image =
+  ## Copy the image belonging to the latest completed frame while the worker is idle.
+  let image = if worker.ready and worker.reply.image != nil: worker.reply.image
+    else: worker.image
+  if image != nil: result = image.copy()
 
 proc close*(worker: CoreWorker) =
   ## Finish outstanding work, save and unload on the core thread, then join it.
   if worker == nil or worker.mailbox == nil: return
   worker.finishPending()
-  worker.mailbox.commands.send(Command(kind: Stop))
+  worker.mailbox.commands.send(Command(kind: Stop,
+    reusable: (if worker.reply.error.len == 0: worker.snapshotImage() else: nil)))
   let reply = worker.mailbox.replies.recv()
   joinThread(worker.thread)
   worker.mailbox.commands.close()
   worker.mailbox.replies.close()
   deallocShared(worker.mailbox)
   worker.mailbox = nil
-  let pendingError = worker.reply.error
+  let pendingError = worker.reply.error & worker.fatalError
   worker.reply = Reply()
   worker.reusable = nil
   worker.image = nil
@@ -201,7 +272,7 @@ proc close*(worker: CoreWorker) =
 
 proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = false,
     options: seq[CoreOption] = @[], statePath = "", raConfigPath = "",
-    achievementsEnabled = false): CoreWorker =
+    achievementsEnabled = false, captureDirectory = "", replayPath = ""): CoreWorker =
   ## Load a software core on its dedicated thread with one bounded frame in flight.
   result = CoreWorker(mailbox: cast[ptr Mailbox](allocShared0(sizeof(Mailbox))))
   result.mailbox.commands.open(1)
@@ -209,7 +280,8 @@ proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = fa
   createThread(result.thread, emulate, result.mailbox)
   var config = Command(kind: Configure, core: owned(corePath), rom: owned(romPath),
     saves: owned(saveDirectory), state: owned(statePath), captureAudio: captureAudio,
-    raConfigPath: owned(raConfigPath), achievementsEnabled: achievementsEnabled)
+    raConfigPath: owned(raConfigPath), achievementsEnabled: achievementsEnabled,
+    captureRoot: owned(captureDirectory), replayPath: owned(replayPath))
   when defined(raTesting):
     config.raHttpTestHandler = workerRaHttpTestHandler
   for option in options: config.options.add((owned(option.key), owned(option.value)))
@@ -225,12 +297,15 @@ proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = fa
   result.libraryName = reply.libraryName
   result.libraryVersion = reply.libraryVersion
   result.savePath = reply.savePath
+  result.captureDirectory = reply.captureDirectory
+  result.stateExport = reply.stateExport
+  result.shutdown = reply.shutdown
   result.av = reply.av
   result.acceptAchievements(reply)
 
 proc prefetch*(worker: CoreWorker, buttons: uint16, pointerInput = PointerInput()) =
   ## Start the next frame while the main thread presents the current one.
-  if worker.pending or worker.ready: return
+  if worker.pending or worker.ready or worker.shutdown: return
   worker.mailbox.commands.send(Command(kind: Step, buttons: buttons,
     pointerInput: pointerInput, reusable: move(worker.reusable)))
   worker.pending = true
@@ -238,6 +313,7 @@ proc prefetch*(worker: CoreWorker, buttons: uint16, pointerInput = PointerInput(
 proc step*(worker: CoreWorker, buttons: uint16, pointerInput = PointerInput(),
     compareVideo = false) =
   ## Consume one frame; optionally compare video before recycling its old storage.
+  if worker.shutdown and not worker.ready: return
   worker.prefetch(buttons, pointerInput)
   worker.finishPending()
   var reply = move(worker.reply)
@@ -278,11 +354,31 @@ proc save*(worker: CoreWorker) =
 proc importStateData*(worker: CoreWorker, contents, source: string) =
   ## Serialize a state import; reject errors without losing the prior ready frame.
   let reply = worker.request(Command(kind: ImportState, contents: owned(contents),
-    source: owned(source)))
-  worker.reply = Reply()
-  worker.ready = false
-  worker.audio = @[]
-  worker.av = reply.av
+    source: owned(source)), checkResult = false)
+  if reply.stateImported:
+    if reply.shutdown: worker.fatalError = reply.error
+    worker.reply = Reply()
+    worker.ready = false
+    worker.audio = @[]
+    worker.image = nil
+    worker.reusable = nil
+    worker.av = reply.av
+    worker.shutdown = reply.shutdown
+  reply.checked()
+
+proc capture*(worker: CoreWorker, reason = "manual", withState = true) =
+  ## Pair a frozen copy of the latest video with state from the same frame boundary.
+  worker.finishPending()
+  worker.reply.checked()
+  let image = worker.snapshotImage()
+  if image == nil: raise newException(IOError, "No completed frame to capture")
+  discard worker.request(Command(kind: Capture, reusable: image,
+    source: owned(reason), withState: withState))
+
+proc exportState*(worker: CoreWorker): string =
+  ## Export after all submitted frames without consuming their presentation results.
+  var reply = worker.request(Command(kind: ExportState))
+  result = move(reply.contents)
 
 proc pause*(worker: CoreWorker) =
   ## Quiesce emulation and discard queued PCM before a focus pause.

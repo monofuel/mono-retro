@@ -76,6 +76,8 @@ type
   PollCallback = proc() {.cdecl.}
   InputCallback = proc(port, device, index, id: cuint): int16 {.cdecl.}
   UnserializeCallback = proc(data: pointer, size: csize_t): bool {.cdecl.}
+  SerializeSizeCallback = proc(): csize_t {.cdecl.}
+  SerializeCallback = proc(data: pointer, size: csize_t): bool {.cdecl.}
   CoreSession* = ref object
     library: LibHandle
     initialized, loaded, ready: bool
@@ -110,6 +112,8 @@ type
     setController: proc(port, device: cuint) {.cdecl.}
     memoryData: proc(id: cuint): pointer {.cdecl.}
     memorySize: proc(id: cuint): csize_t {.cdecl.}
+    serializeSize: SerializeSizeCallback
+    serialize: SerializeCallback
 
 var active: CoreSession
 
@@ -356,6 +360,25 @@ proc importStateData*(session: CoreSession, contents: string, source: string) =
   session.buttons = 0
   session.pointerInput = PointerInput()
 
+proc stateSize*(session: CoreSession): int =
+  ## Query optional state export without requiring unsupported cores to implement it.
+  if session == nil or not session.loaded or session.serializeSize == nil or
+      session.serialize == nil: return 0
+  let size = session.serializeSize()
+  session.check()
+  if size > MaxSaveBytes.csize_t:
+    raise newException(IOError, "Core state exceeds supported size")
+  size.int
+
+proc exportState*(session: CoreSession): string =
+  ## Copy the current machine state on the thread that owns the libretro session.
+  let size = session.stateSize()
+  if size == 0: raise newException(IOError, "Core does not support state export")
+  result = newString(size)
+  let accepted = session.serialize(addr result[0], size.csize_t)
+  session.check()
+  if not accepted: raise newException(IOError, "Core rejected state export")
+
 proc importState*(session: CoreSession, path: string) =
   ## Read opaque save-state bytes from a file and import them.
   if path.len == 0: return
@@ -385,7 +408,8 @@ proc close*(session: CoreSession) =
     active = nil
 
 proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false,
-    options: seq[CoreOption] = @[], statePath = "", captureVideo = true): CoreSession =
+    options: seq[CoreOption] = @[], statePath = "", captureVideo = true,
+    stateData = ""): CoreSession =
   ## Load one explicitly selected software core and an independent save history.
   ## Disabling captureVideo discards pixels without requesting skipped core rendering.
   if active != nil: raise newException(ValueError, "Only one libretro core can be active")
@@ -421,6 +445,8 @@ proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false,
     bindSymbol(setController, "retro_set_controller_port_device")
     bindSymbol(memoryData, "retro_get_memory_data")
     bindSymbol(memorySize, "retro_get_memory_size")
+    session.serializeSize = cast[SerializeSizeCallback](symAddr(session.library, "retro_serialize_size"))
+    session.serialize = cast[SerializeCallback](symAddr(session.library, "retro_serialize"))
     if session.apiVersion() != CoreApiVersion:
       raise newException(IOError, "Unsupported libretro API version")
     createDir(session.systemDirectory)
@@ -464,7 +490,8 @@ proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false,
       if contents.len > 0: copyMem(target, unsafeAddr contents[0], contents.len)
       session.saved = contents
     # Import before ready so a failed load cannot persist SRAM on cleanup.
-    importState(session, statePath)
+    if stateData.len > 0: session.importStateData(stateData, statePath)
+    else: importState(session, statePath)
     session.ready = true
   except:
     session.close()

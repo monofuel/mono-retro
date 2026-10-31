@@ -1,4 +1,8 @@
 /build/
+/captures/
+*.state
+*.srm
+earthbound_*.png
 /tests/test_hardware
 /src/hwtest
 .mono-retro-ra.json

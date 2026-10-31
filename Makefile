@@ -16,6 +16,8 @@ check:
 	nim check tests/test_playerds.nim
 	nim check tests/test_playerstate.nim
 	nim check tests/test_playerworker.nim
+	nim check tests/test_playercapture.nim
+	nim check tests/test_captureworker.nim
 	nim check tests/test_playergpu.nim
 	nim check tests/test_playerpixels.nim
 	nim check tests/test_playerxbgr.nim
@@ -107,6 +109,8 @@ test-player: player-fixtures prepare-lost-in-blue-tool
 	nim r -o:build/test-earthbound-viewport tests/test_earthbound_viewport.nim
 	nim r -o:build/test-playerstate tests/test_playerstate.nim
 	nim r -o:build/test-playerworker tests/test_playerworker.nim
+	nim r -o:build/test-playercapture tests/test_playercapture.nim
+	nim r -o:build/test-captureworker tests/test_captureworker.nim
 	nim r -o:build/test-playergpu tests/test_playergpu.nim
 	nim r -o:build/test-playerpixels tests/test_playerpixels.nim
 	nim r -o:build/test-playerxbgr tests/test_playerxbgr.nim

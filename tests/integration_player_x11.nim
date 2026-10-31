@@ -1,5 +1,7 @@
 import
   std/[monotimes, os, osproc, streams, strutils, tempfiles, times, uri],
+  pixie,
+  retro/playercapture,
   vmath,
   windy/platforms/linux/x11/[x, xevent, xlib]
 
@@ -367,6 +369,63 @@ proc testAchievementOverlay(d: Display, directory: string) =
   closeWindow(d, top)
   doAssert process.waitForExit(5000) == 0
 
+proc testCaptures(d: Display, directory: string) =
+  ## Exercise F12 in the companion window, periodic capture and orderly exit.
+  let
+    rom = directory / "capture.test"
+    trace = directory / "capture-trace"
+    captures = directory / "capture-sessions"
+  writeFile(rom, "E")
+  putEnv("MONO_RETRO_FIXTURE_TRACE", trace)
+  let process = startProcess(absolutePath("build/mono-retro-player"), args = testArguments([
+    "--core:" & absolutePath("build/player-fixture.so"), "--rom:" & rom,
+    "--save-dir:" & directory / "capture-saves", "--capture-dir:" & captures,
+    "--earthbound-ds", "--mute"]), options = {poParentStreams})
+  defer:
+    if process.running(): process.terminate()
+    discard process.waitForExit(5000)
+    process.close()
+  let window = findWindow(d, " | Party")
+  d.XSetInputFocus(window, rtRoot)
+  d.XFlush()
+  waitFrames(trace, 5)
+  key(d, window, 0xffc9, true)
+  waitFrames(trace, frameCount(trace) + 3)
+  key(d, window, 0xffc9, false)
+  key(d, window, 0x78, true)
+  waitFrames(trace, frameCount(trace) + 5)
+  key(d, window, 0x78, false)
+  key(d, window, 0xff09, true)
+  sleep(250)
+  key(d, window, 0xff09, false)
+  let deadline = getMonoTime() + initDuration(seconds = 8)
+  var screenshots: seq[string]
+  while screenshots.len < 2:
+    doAssert getMonoTime() < deadline, "F12 and periodic screenshots were not written"
+    screenshots.setLen(0)
+    for path in walkDirRec(captures):
+      if path.endsWith(".png"): screenshots.add(path)
+    sleep(25)
+  closeWindow(d, window)
+  doAssert process.waitForExit(5000) == 0
+  var
+    plain, embedded, replayFrames: int
+  for path in walkDirRec(captures):
+    if path.endsWith(".png"):
+      let image = readImage(path)
+      doAssert image.width == 256 and image.height == 448
+      if readFile(path).contains("mrSt"): inc embedded
+      else: inc plain
+    elif path.extractFilename.startsWith("segment_") and path.endsWith(".json"):
+      let recording = readReplay(path)
+      replayFrames += recording.inputs.len
+      var pressed = false
+      for input in recording.inputs:
+        if input.buttons == 256: pressed = true
+      doAssert pressed, "Recorded inputs missed the real keyboard input"
+  doAssert plain >= 1 and embedded == 2
+  doAssert replayFrames == frameCount(trace), "Recording lost prefetched or fast-forwarded frames"
+
 proc main() =
   ## Check presentation, input, pausing and shutdown on isolated Xvfb.
   var
@@ -492,6 +551,7 @@ proc main() =
   testDs(d, directory)
   testStateDrops(d, directory)
   testAchievementOverlay(d, directory)
+  testCaptures(d, directory)
   if paramCount() == 3:
     putEnv("ALSOFT_DRIVERS", "null")
     let seed = readFile(paramStr(3))

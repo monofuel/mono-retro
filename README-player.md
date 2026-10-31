@@ -69,8 +69,41 @@ open; decompbound validates before changing its live state.
 State import can restore battery SRAM, which normal autosave/exit persists in
 the selected `--save-dir`. Use a separate test-save directory. Source state
 files are never rewritten. Native DRM has no desktop file-drop events; use
-`--load-state` on handhelds. The player does not create states or register state
-hotkeys, and cores with no state support still work normally without this option.
+`--load-state` on handhelds. Cores without state support still run normally.
+
+## Screenstates and recorded sessions
+
+**F12** (or a controller Share button exposed by Paddy as `GamepadMisc0`) captures
+a resumable PNG. The image contains the complete core frame, including both screens
+in DS layouts, without the achievement overlay or window scaling. Drop the PNG onto
+either desktop window, or pass it with `--load-state`, to resume. Decompbound captures
+use its existing `ebSt` format; other cores use a frontend `mrSt` envelope that checks
+the ROM and core build before importing the opaque core state.
+
+Normal play records inputs automatically from an initial checkpoint. Every five
+seconds of active play, a plain screenshot records its segment and replay-frame
+position in a sidecar. These periodic PNGs are not self-contained screenstates.
+F12 and orderly exit capture full screenstates. A successful state import starts a
+new recording segment. Recording includes every emulated frame during fast-forward,
+not just frames presented on screen, and includes pointer input.
+
+Sessions live under `SAVE_DIR/captures/`; the player prints the full session path.
+Use `--capture-dir:DIR` to choose another location or `--captures:off` to disable
+capture and recording for benchmarks. PNG compression and disk writes run on a
+separate writer thread; the core's state is copied between frames on its owner thread.
+Exit waits for queued writes to finish. Cores without state export retain plain
+image captures, but cannot produce screenstates or replay recordings.
+
+Replay a segment with `--replay:/path/to/segment_0001.json`, the same `--core` and
+`--rom`, and the same core-option flags such as `--earthbound-ds`. Replay stops at
+the recorded end, uses recorded inputs, and disables achievements. Use a separate
+`--save-dir` when replaying because restored state can replace battery saves.
+Recordings require the original ROM and exact core binary and are not portable
+across core builds. Keep captures, checkpoints and recordings private and out of Git.
+To reconstruct a periodic screenshot, use its sidecar's `replay` filename with
+`--replay` and its `frames` count with `--frames:N`; the exit screenstate saves that
+moment. The manifest and log are flushed before the screenshot is written, so a
+capture can be replayed while its original session remains open.
 
 ## Controls
 
@@ -82,6 +115,7 @@ hotkeys, and cores with no state support still work normally without this option
 | Enter / Backspace | Start / Select |
 | Escape | Save and exit |
 | F1 / controller Menu or Home | Pause and browse achievements |
+| F12 / controller Share | Capture a resumable screenstate |
 | Hold controller R2 / Tab | Fast-forward up to 4×; release for normal speed |
 
 The achievement browser consumes Escape/B to return. See
@@ -431,6 +465,20 @@ and uploads. Changed pixels and resized outputs redraw. X11 GPU retains unchange
 textures and redraws for crop changes, resize and restoration of hidden windows.
 
 ## Validation
+
+Capture coverage includes synthetic checkpoint/export/import round-trips, sparse
+inputs and pointer changes, duplicate and prefetched video, writer failures, and
+F12/periodic/exit capture through real X11 events on a private Xvfb display.
+For a local Decompbound core and ROM, run this headless check inside the player
+Nix shell (it generates/captures PCM without opening an audio device):
+
+```sh
+nim r tests/integration_decompbound_capture.nim CORE_SO ROM_PATH SCREENSTATE_PNG
+```
+
+It records 60 dual-screen frames, checks every replayed pixel/PCM hash and the
+final serialized machine state, then resumes the manual capture. Its temporary
+captures are removed afterward. User-provided ROMs and screenstates stay outside Git.
 
 ```sh
 make check test test-player

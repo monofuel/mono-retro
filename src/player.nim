@@ -6,6 +6,7 @@ import
 
 const
   SaveIntervalSeconds = 5
+  CaptureIntervalSeconds = 5
   PollIntervalMs = 2
   NanosecondsPerMillisecond = 1_000_000
   ExitHoldSeconds = 2
@@ -19,6 +20,10 @@ Libretro player with Slappy audio. --mute opens no audio device.
 --no-input requires --frames and feeds neutral controls for repeatable benchmarks.
 --load-state:PATH is a startup-only CLI import of a core-defined format.
 Desktop: drop a state file onto a window.
+F12 or controller Share captures a resumable screenstate (including both screens).
+Captures: periodic screenshots every 5s, input recording, and a final exit screenstate.
+--capture-dir:DIR overrides SAVE_DIR/captures; --captures:off disables capture/recording.
+--replay:SEGMENT.json restores and replays a recorded segment with matching core/options.
 Arrows: D-pad. X/Z: A/B. A/S: L/R. PageUp/PageDown: L2/R2. Enter: Start. Backspace: Select.
 Hold controller R2 or keyboard Tab for up to 4x fast-forward with audio muted.
 F1 or MENU/Home opens achievements; B/Escape returns. Escape outside the menu exits.
@@ -43,7 +48,8 @@ proc stopHandler(signal: cint) {.noconv.} =
 proc main() =
   ## Run one core with an independent save directory.
   var
-    corePath, romPath, saveDirectory, statePath: string
+    corePath, romPath, saveDirectory, statePath, captureDirectory, replayPath: string
+    capturesEnabled = true
     limit = 0'u64
     muted = false
     videoMode = AutoVideo
@@ -69,6 +75,17 @@ proc main() =
     of "load-state":
       if value.len == 0: raise newException(IOError, "Missing state path")
       statePath = value
+    of "capture-dir":
+      if value.len == 0: raise newException(ValueError, "Missing capture directory")
+      captureDirectory = value
+    of "captures":
+      case value
+      of "on": capturesEnabled = true
+      of "off": capturesEnabled = false
+      else: raise newException(ValueError, "Expected --captures:on|off")
+    of "replay":
+      if value.len == 0: raise newException(ValueError, "Missing replay segment")
+      replayPath = value
     of "mute": muted = true
     of "video": videoMode = parseVideoMode(value)
     of "vsync":
@@ -114,6 +131,11 @@ proc main() =
     raise newException(ValueError, Help)
   if noInput and limit == 0:
     raise newException(ValueError, "--no-input requires --frames")
+  if replayPath.len > 0:
+    if statePath.len > 0: raise newException(ValueError, "--replay cannot be combined with --load-state")
+    achievementsEnabled = false
+  if capturesEnabled and captureDirectory.len == 0:
+    captureDirectory = saveDirectory / "captures"
   when defined(playerWalkBenchmark):
     if limit == 0: raise newException(ValueError, "Walking benchmark requires --frames")
     if noInput: raise newException(ValueError, "Walking benchmark cannot use --no-input")
@@ -124,7 +146,8 @@ proc main() =
   validateDsDisplay(dual.layout, settings.displayBackend(), settings.outputs.len)
   let session = openCoreWorker(corePath, romPath, saveDirectory, captureAudio = not muted,
     options = dual.options, statePath = statePath,
-    raConfigPath = raConfigPath, achievementsEnabled = achievementsEnabled)
+    raConfigPath = raConfigPath, achievementsEnabled = achievementsEnabled,
+    captureDirectory = (if capturesEnabled: captureDirectory else: ""), replayPath = replayPath)
   defer: session.close()
   if dual.layout != NoDsLayout:
     validateDualGeometry(session.av.geometry.baseWidth.int, session.av.geometry.baseHeight.int, dual.geometry)
@@ -176,6 +199,10 @@ proc main() =
   posix.signal(SIGTERM, stopHandler)
   echo "Core: ", session.libraryName, " ", session.libraryVersion
   echo "Save: ", session.savePath
+  if session.captureDirectory.len > 0:
+    echo "Captures: ", session.captureDirectory
+    if not session.stateExport:
+      echo "Core has no state export: only image captures are available; input recording is disabled."
   if statePath.len > 0: echo "State: ", statePath
   echo "Audio: ", (if muted: "muted" else: "Slappy"), "; core rate: ", session.av.timing.fps
   echo "Presentation: ", (if gpu == nil: "CPU"
@@ -185,6 +212,7 @@ proc main() =
     clock = newFrameClock(session.av.timing.fps, getMonoTime().ticks)
     fps = session.av.timing.fps
     lastSave = getMonoTime()
+    lastCapture = getMonoTime()
     canvases = newSeq[Image](screen.count())
     dsImages: array[2, Image]
     paused = false
@@ -201,6 +229,7 @@ proc main() =
     pointerHeld, suppressPointer: bool
     suppressButtons, overlayInputArmed: bool
     toggleHeld, activateHeld, backHeld: bool
+    captureHeld: bool
     pointerX, pointerY: float32
     pointerOutput: int
   when defined(playerTimings):
@@ -305,6 +334,7 @@ proc main() =
         if sound != nil: sound.reset()
         clock.reset(getMonoTime().ticks)
         lastSave = getMonoTime()
+        lastCapture = lastSave
         stylus = DsStylus()
         companionGesture = CompanionGesture()
         suppressPointer = true
@@ -314,7 +344,7 @@ proc main() =
         dsImages = default(array[2, Image])
         target.focus()
       except CatchableError as error:
-        stderr.writeLine("Rejected state " & fileName & ": " & error.msg)
+        stderr.writeLine("State import " & fileName & ": " & error.msg)
   if desktop:
     for index in 0 ..< screen.count():
       installStateDrop(screen.window(index))
@@ -338,6 +368,7 @@ proc main() =
       if not desktop: raise
       stderr.writeLine("Could not read dropped state: " & error.msg)
       continue
+    if session.shutdown: break
     if sound != nil:
       measured(AudioOutput): sound.pump()
     var pads: seq[Gamepad]
@@ -369,6 +400,15 @@ proc main() =
       inputScreen = if desktop and focusedIndex >= 0: focusedIndex else: activeScreen
       window = screen.window(inputScreen)
       size = window.framebufferSize
+    let capturePressed = (window.buttonPressed[KeyF12] or
+      pad.buttonPressed(GamepadMisc0)) and not captureHeld
+    captureHeld = window.buttonDown[KeyF12] or pad.button(GamepadMisc0)
+    if capturePressed and session.captureDirectory.len > 0:
+      try:
+        session.capture()
+        echo "Screenstate queued in ", session.captureDirectory
+      except CatchableError as error:
+        stderr.writeLine("Screenstate capture failed: " & error.msg)
     var held: set[Button]
     for (key, button) in KeyboardButtons:
       if window.buttonDown[key]: held.incl key
@@ -465,6 +505,10 @@ proc main() =
       sleep(PollIntervalMs)
       continue
     paused = false
+    if session.captureDirectory.len > 0 and session.image != nil and
+        (now - lastCapture).inSeconds >= CaptureIntervalSeconds:
+      session.capture(reason = "auto", withState = false)
+      lastCapture = now
     if now.ticks < clock.deadline:
       let remainingMs = int((clock.deadline - now.ticks) div NanosecondsPerMillisecond)
       measured(Waiting): sleep(min(PollIntervalMs, remainingMs))
