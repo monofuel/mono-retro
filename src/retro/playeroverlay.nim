@@ -3,7 +3,9 @@
 import
   std/math,
   pixie,
-  ./[overlayui, playergeometry, playervideo, ra_types]
+  ./[overlayui, pausemenu, playergeometry, playerslots, playervideo, ra_types]
+
+export pausemenu.PauseRequest, pausemenu.PauseRequestKind
 
 export overlayui.OverlayPanelWidth, overlayui.OverlayPanelHeight,
   overlayui.OverlayRows, overlayui.OverlayRect, overlayui.OverlayLayout
@@ -40,6 +42,10 @@ type
     panelWidth, panelHeight, active, width, height: int
     geometry: DualGeometry
   OverlayState* = ref object
+    pause*: PauseMenu
+    volumeImage: Image
+    volumeVisible: bool
+    volumeRevision: uint64
     ui: OverlayUi
     snapshot: RaSnapshot
     opened, details: bool
@@ -77,6 +83,28 @@ proc showingDetails*(state: OverlayState): bool =
 proc changed(state: OverlayState) =
   ## Invalidate app-owned UI images after a visible state change.
   inc state.uiRevision
+
+proc configurePauseMenu*(state: OverlayState, store: StateStore, canSave, canLoad: bool) =
+  ## Enable the general menu while keeping achievement-only callers compatible.
+  state.pause = newPauseMenu(store, canSave, canLoad)
+  state.changed()
+
+proc setVolumeOverlay*(state: OverlayState, image: Image, visible: bool, revision: uint64) =
+  ## Invalidate presentation only when the shared volume indicator changes.
+  if visible != state.volumeVisible or (visible and revision != state.volumeRevision):
+    state.volumeImage = image
+    state.volumeVisible = visible
+    state.volumeRevision = revision
+    state.changed()
+
+proc takePauseRequest*(state: OverlayState): PauseRequest =
+  ## Consume confirmed save, load and launcher actions without touching the core.
+  if state.pause != nil: result = state.pause.takeRequest()
+
+proc completePauseRequest*(state: OverlayState, message: string) =
+  ## Display an operation result without closing the frozen game session.
+  state.pause.complete(message)
+  state.changed()
 
 proc reconcileSelection(state: OverlayState) =
   ## Keep selection and paging inside the current cached achievement list.
@@ -162,6 +190,7 @@ proc handleOverlay*(state: OverlayState, input: OverlayInput): OverlayAction =
   if input == OverlayToggle:
     state.opened = not state.opened
     if state.opened:
+      if state.pause != nil: state.pause.openRoot()
       state.frozenGame = nil
       state.details = false
       state.scroll = 0
@@ -169,6 +198,31 @@ proc handleOverlay*(state: OverlayState, input: OverlayInput): OverlayAction =
     return if state.opened: OverlayOpened else: OverlayClosed
   if not state.opened:
     return OverlayNone
+  if state.pause != nil:
+    if state.pause.page != PauseAchievements:
+      if input in {OverlayPagePrevious, OverlayPageNext}:
+        if state.pause.page in {PauseLoad, PauseRecent}: state.pause.switchSource()
+        else: state.pause.pageBy(if input == OverlayPagePrevious: -1 else: 1)
+      else:
+        let command = case input
+          of OverlayBack: OcResume
+          of OverlayActivate: OcActivate
+          of OverlayPrevious: OcPrevious
+          of OverlayNext: OcNext
+          else: OcNone
+        if state.pause.handle(command):
+          state.opened = false
+          state.changed()
+          return OverlayClosed
+        if state.pause.page == PauseAchievements:
+          state.details = false
+          state.scroll = 0
+      state.changed()
+      return OverlayChanged
+    elif input == OverlayBack and not state.details:
+      state.pause.openRoot()
+      state.changed()
+      return OverlayChanged
   case input
   of OverlayBack:
     if state.details:
@@ -208,6 +262,16 @@ proc pointerOverlay*(state: OverlayState, x, y: float32): OverlayAction =
   ## Activate a pointer release already mapped into the logical UI panel.
   if not state.opened:
     return OverlayNone
+  if state.pause != nil and state.pause.page != PauseAchievements:
+    if state.pause.pointer(x, y):
+      state.opened = false
+      state.changed()
+      return OverlayClosed
+    if state.pause.page == PauseAchievements:
+      state.details = false
+      state.scroll = 0
+    state.changed()
+    return OverlayChanged
   let hit = state.controls().hitTest(x, y)
   case hit.control
   of OcResume: state.handleOverlay(OverlayToggle)
@@ -265,7 +329,7 @@ proc composeOverlay*(state: OverlayState, coreImage: Image, coreSequence: uint64
     coreChanged = not state.composed or
       ((source != state.lastSource or coreSequence != state.lastCoreSequence) and changed)
     keyChanged = not state.composed or key != state.lastKey
-    visibleUi = state.opened or state.noticeActive
+    visibleUi = state.opened or state.noticeActive or state.volumeVisible
     uiChanged = state.uiRevision != state.lastUiRevision and (visibleUi or state.lastHadUi)
     redraw = coreChanged or keyChanged or uiChanged
   result.modal = state.opened
@@ -283,11 +347,17 @@ proc composeOverlay*(state: OverlayState, coreImage: Image, coreSequence: uint64
       state.frozenGame = newImage(width, gameHeight)
       copyRegion(coreImage, state.frozenGame, (0, 0, width, gameHeight), 0, 0)
     if redraw or state.panel == nil:
-      let rendered = state.ui.renderPanel(state.snapshot, state.selected, state.first,
-        state.details, state.scroll, state.panel)
-      state.panel = rendered.image
-      state.maxScroll = rendered.maxScroll
-      state.scroll = clamp(state.scroll, 0, state.maxScroll)
+      if state.pause != nil and state.pause.page != PauseAchievements:
+        state.panel = state.ui.renderPause(state.pause, state.panel)
+      else:
+        let rendered = state.ui.renderPanel(state.snapshot, state.selected, state.first,
+          state.details, state.scroll, state.panel)
+        state.panel = rendered.image
+        state.maxScroll = rendered.maxScroll
+        state.scroll = clamp(state.scroll, 0, state.maxScroll)
+      if state.volumeVisible and state.volumeImage != nil:
+        state.panel.draw(state.volumeImage, translate(vec2(
+          (OverlayPanelWidth - state.volumeImage.width - ToastInset).float32, ToastInset.float32)))
     if display == OverlaySingle:
       result.sourceImage = state.panel
       result.crops[0] = (0, 0, OverlayPanelWidth, OverlayPanelHeight)
@@ -320,16 +390,28 @@ proc composeOverlay*(state: OverlayState, coreImage: Image, coreSequence: uint64
   else:
     result.crops = normalCrops(coreImage, display, stacked, panelWidth, panelHeight, active, geometry)
     result.sourceImage = coreImage
-    if state.noticeActive and coreImage != nil:
+    if (state.noticeActive or state.volumeVisible) and coreImage != nil:
       if redraw:
-        state.composite = storage(state.composite, width, height)
+        let extraBottom = state.volumeVisible and display == OverlaySeparate and
+          result.crops[1].width == 0
+        state.composite = storage(state.composite, width, if extraBottom: height * 2 else: height)
+        if extraBottom: state.composite.fill(rgbx(0, 0, 0, 255))
         copyRegion(coreImage, state.composite, (0, 0, width, height), 0, 0)
-        let toastWidth = max(1, width - ToastInset * 2)
-        if state.noticeImage == nil or state.noticeImage.width != toastWidth or
-            state.renderedNoticeRevision != state.noticeRevision:
-          state.noticeImage = state.ui.renderNotice(state.notice, toastWidth, state.noticeImage)
-          state.renderedNoticeRevision = state.noticeRevision
-        state.composite.draw(state.noticeImage, translate(vec2(ToastInset.float32, ToastInset.float32)))
+        if state.noticeActive:
+          let toastWidth = max(1, width - ToastInset * 2)
+          if state.noticeImage == nil or state.noticeImage.width != toastWidth or
+              state.renderedNoticeRevision != state.noticeRevision:
+            state.noticeImage = state.ui.renderNotice(state.notice, toastWidth, state.noticeImage)
+            state.renderedNoticeRevision = state.noticeRevision
+          state.composite.draw(state.noticeImage, translate(vec2(ToastInset.float32, ToastInset.float32)))
+        if state.volumeVisible and state.volumeImage != nil:
+          let crop: OverlayCrop = if extraBottom: (0, height, width, height)
+            elif display == OverlaySeparate: result.crops[1] else: result.crops[0]
+          let factor = min(1'f32, max(1, crop.width - ToastInset * 2).float32 / state.volumeImage.width.float32)
+          state.composite.draw(state.volumeImage,
+            translate(vec2((crop.x + ToastInset).float32, (crop.y + ToastInset).float32)) * scale(vec2(factor, factor)))
+      if state.volumeVisible and display == OverlaySeparate and result.crops[1].width == 0:
+        result.crops[1] = (0, height, width, height)
       result.sourceImage = state.composite
   state.composed = true
   state.lastKey = key

@@ -1,5 +1,8 @@
 .PHONY: check test test-audio build arm64
 check:
+	nim check src/retro/systemvolume.nim
+	nim check src/retro/playerslots.nim
+	nim check tests/test_pausemenu.nim
 	nim check tools/benchmark_core.nim
 	nim check tests/test_shipping_profile.nim
 	nim check src/hwtest.nim
@@ -29,6 +32,9 @@ test:
 	nim r tests/test_gamepad.nim
 	nim r tests/test_launcher.nim
 	nim r -o:build/test-player tests/test_player.nim
+	nim r -o:build/test-systemvolume tests/test_systemvolume.nim
+	nim r -o:build/test-playerslots tests/test_playerslots.nim
+	nim r -o:build/test-pausemenu tests/test_pausemenu.nim
 test-audio:
 	nim r tests/test_audio_stream.nim
 build:
@@ -102,6 +108,7 @@ player-fixtures:
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC -DOMIT_RUN tests/fixtures/player_core.c -o build/player-missing.so
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC -DRA_FIXTURE tests/fixtures/player_core.c -o build/player-ra-fixture.so
 test-player: player-fixtures prepare-lost-in-blue-tool
+	nim r -o:build/test-playerslotworker tests/test_playerslotworker.nim
 	nim r -o:build/test-player tests/test_player.nim
 	nim r -o:build/test-playercore tests/test_playercore.nim
 	ALSOFT_DRIVERS=null nim r -o:build/test-playeraudio tests/test_playeraudio.nim

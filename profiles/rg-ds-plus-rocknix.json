@@ -9,6 +9,12 @@
     "DSI-1"
   ],
   "audioDevice": "mono_retro_ds_plus",
+  "volumeCard": "aw88166",
+  "volumeControls": [
+    "Left PCM",
+    "Right PCM"
+  ],
+  "volumeInverted": true,
   "inputNames": [
     "retrogame_joypad",
     "adc-keys-back",

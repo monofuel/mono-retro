@@ -124,7 +124,7 @@ proc canonicalizeState(state: string): string =
     raise newException(ValueError, "DBST export envelope padding is not zero")
   state[0 ..< payload]
 
-proc romCrc32(rom: string): uint32 =
+proc normalizedRomCrc32*(rom: string): uint32 =
   ## CRC32 of ROM bytes after dropping an optional 512-byte copier header.
   var start = 0
   if rom.len mod 1024 == CopierHeaderBytes:
@@ -243,6 +243,18 @@ proc embedPng(png: string, job: CaptureJob): string =
   of MrStShot: insertChunk(png, MrStType, mrStPayload(job.state, job.romHash, job.coreHash))
   of FileWrite, LogAppend:
     raise newException(ValueError, "A recording write is not an image capture")
+
+proc encodeScreenstatePng*(image: Image, state, romHash, coreHash: string,
+    romCrc: uint32, decompbound: bool): string =
+  ## Encode an image with one validated ebSt or mrSt screenstate PNG chunk.
+  if image == nil:
+    raise newException(ValueError, "Capture image is missing")
+  if state.len == 0 or state.len > MaxStateBytes:
+    raise newException(ValueError, "Screenstate must contain between one byte and 64 MiB")
+  let canonical = if decompbound: canonicalizeState(state) else: state
+  let payload = if decompbound: ebStPayload(canonical, romCrc)
+    else: mrStPayload(canonical, romHash, coreHash)
+  insertChunk(image.encodeImage(PngFormat), if decompbound: EbStType else: MrStType, payload)
 
 proc writeShot(job: CaptureJob) =
   ## Encode a cloned image and write the PNG plus sidecar in the session root.
@@ -421,7 +433,7 @@ proc openCaptureWriter*(root, romPath, corePath, coreName, coreVersion: string;
   let rom = readFile(romPath)
   result.romHash = $secureHash(rom)
   result.coreHash = sha1Hex(corePath)
-  result.romCrc = romCrc32(rom)
+  result.romCrc = normalizedRomCrc32(rom)
   result.writeMetadata(absolutePath(romPath), absolutePath(corePath))
   result.startWriter()
 

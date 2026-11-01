@@ -338,6 +338,10 @@ proc save*(session: CoreSession) =
     writeSave(session.savePath, contents)
     session.saved = contents
 
+proc canImportState*(session: CoreSession): bool =
+  ## Report whether the loaded core exposes the optional restoration callback.
+  session != nil and session.loaded and symAddr(session.library, "retro_unserialize") != nil
+
 proc importStateData*(session: CoreSession, contents: string, source: string) =
   ## Pass opaque core-defined save-state bytes through optional retro_unserialize.
   if session == nil or not session.loaded:

@@ -120,11 +120,11 @@ capture can be replayed while its original session remains open.
 | A / S | L / R |
 | Enter / Backspace | Start / Select |
 | Escape | Save and exit |
-| F1 / controller Menu or Home | Pause and browse achievements |
+| F1 / controller Menu or Home | Pause menu: save/load states, achievements and exit |
 | F12 / controller Share | Capture a resumable screenstate |
 | Hold controller R2 / Tab | Fast-forward up to 4×; release for normal speed |
 
-The achievement browser consumes Escape/B to return. See
+The pause menu and achievement browser consume Escape/B to return. See
 [RetroAchievements setup](docs/retroachievements.md) for the login helper and
 Casual-mode support in Decompbound.
 
@@ -400,7 +400,7 @@ samples. A changed core sample rate recreates the stream. Closing releases the
 source and buffers before destroying the OpenAL context.
 
 Slappy selects its first available OpenAL output. Backend/device selection is
-handled through OpenAL Soft's normal configuration; volume uses system controls.
+handled through OpenAL Soft's normal configuration; volume uses the shared profile-configured system mixer.
 Audio initialization and playback errors stop the player through its normal
 save/cleanup path. Add `--mute` to deliberately discard audio without opening a
 device. OpenAL Soft remains a linked runtime dependency in muted mode.
@@ -421,8 +421,8 @@ continuing; callback errors are raised after control returns to Nim.
 
 Different ROMs with the same stem need separate save directories. Use one player
 per save directory. Forced termination or power loss can lose changes since the
-last successful write. Save states, RTC persistence and cross-emulator save
-conversion are outside this MVP.
+last successful write. Save states use the pause menu described below. RTC persistence and
+cross-emulator save conversion remain outside this MVP.
 
 ## Performance diagnostics
 
@@ -547,3 +547,12 @@ capture to `build/player-test/mgba-smoke.png`. The optional X11 smoke test check
 controller and saving/loading in Mother 3's own menu. For audio acceptance, listen
 for correct music speed/pitch and clean effects, then unfocus/refocus the window
 and check that old audio does not resume.
+
+## Handheld volume and pause menu
+
+On RG DS Plus ROCKNIX, the volume buttons control shared speaker volume in the
+launcher and player, with a brief on-screen percentage/bar. Menu/Home or F1 opens
+Resume, Save State, Load State, Achievements and Exit to Launcher. Each game has
+ten screenshot-backed save slots; Load State also browses recent resumable
+captures. See [controls and save slots](docs/handheld-controls.md) and
+[manual verification](docs/human-verify.md).

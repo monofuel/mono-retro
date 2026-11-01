@@ -1,8 +1,9 @@
 import
   std/[monotimes, os, parseopt, posix, strutils, times],
   paddy, pixie, windy,
-  retro/[anbernic, display, gamepad, libretro, playeraudio, playerclock, playerds, playergpu,
-    playerinput, playeroverlay, playerprofile, playervideo, playerworker, settings]
+  retro/[anbernic, display, gamepad, input, libretro, playeraudio, playerclock, playerds, playergpu,
+    playerinput, playeroverlay, playerprofile, playerslots, playervideo, playerworker, settings,
+    systemvolume, volumeui]
 
 const
   SaveIntervalSeconds = 5
@@ -27,7 +28,7 @@ F12 and exit screenstates also appear in ~/Pictures/Screenshots/.
 --replay:SEGMENT.json restores and replays a recorded segment with matching core/options.
 Arrows: D-pad. X/Z: A/B. A/S: L/R. PageUp/PageDown: L2/R2. Enter: Start. Backspace: Select.
 Hold controller R2 or keyboard Tab for up to 4x fast-forward with audio muted.
-F1 or MENU/Home opens achievements; B/Escape returns. Escape outside the menu exits.
+F1 or MENU/Home opens the pause/save/load menu; B/Back/Escape returns.
 --achievements:on|off (default on); --ra-config:PATH overrides the private token file.
 Sign in with mono-retro-ra login. Only Casual achievements are supported.
 The first connected gamepad uses RetroPad positions.
@@ -195,6 +196,19 @@ proc main() =
       blanked[index] = true
   initGamepads()
   defer: closeGamepads()
+  let
+    volume = openSystemVolume(settings)
+    volumeUi = newVolumeUi()
+    stateStore = newStateStore(saveDirectory, romPath, corePath, captureDirectory, screenstateDirectory)
+  defer: volume.close()
+  var volumeImage: Image
+  var backInputs: seq[InputDevice]
+  if not desktop:
+    for binding in settings.bindings:
+      if binding.label == "BACK":
+        for path in inputPaths(@[binding.device]): backInputs.add openInput(path)
+  defer:
+    for device in backInputs: device.close()
   var sound: PlayerAudio
   defer: sound.close()
   if not muted: sound = newPlayerAudio(session.av.timing.sampleRate)
@@ -236,6 +250,9 @@ proc main() =
     captureHeld: bool
     pointerX, pointerY: float32
     pointerOutput: int
+    menuStickReady = true
+  overlay.configurePauseMenu(stateStore, session.stateExport and replayPath.len == 0,
+    session.stateImport and replayPath.len == 0)
   when defined(playerTimings):
     var reusedScreens: array[2, int]
   let overlayDisplay = if dual.layout == SeparateDs or (not desktop and screen.count() > 1):
@@ -381,6 +398,20 @@ proc main() =
     let
       pad = firstGamepad(pads)
       now = getMonoTime()
+    var rawBackPressed, rawBackHeld: bool
+    for device in backInputs:
+      for event in device.readEvents():
+        for binding in settings.bindings:
+          if binding.label == "BACK" and binding.device == device.name and
+              event.kind == binding.kind and event.code == binding.code and event.value == 1:
+            rawBackPressed = true
+      for binding in settings.bindings:
+        if binding.label == "BACK" and binding.active(@[device]): rawBackHeld = true
+    if volume != nil:
+      let changed = volume.poll(now.ticks)
+      if changed or volumeImage == nil:
+        volumeImage = volumeUi.renderVolume(volume.percent, volume.error, 200, volumeImage)
+      overlay.setVolumeOverlay(volumeImage, volume.visible(now.ticks), volume.revision)
     if pad.button(GamepadSelect) and pad.button(GamepadStart):
       if not exitHeld: exitStarted = now
       exitHeld = true
@@ -418,7 +449,7 @@ proc main() =
       if window.buttonDown[key]: held.incl key
     if window.buttonDown[KeyTab]: held.incl KeyTab
     let controls = playerControls(held, pads)
-    var controlsHeld = gamepadButtons(pads) != 0 or pad.button(GamepadHome)
+    var controlsHeld = gamepadButtons(pads) != 0 or pad.button(GamepadHome) or rawBackHeld
     for index in 0 ..< screen.count():
       let target = screen.window(index)
       controlsHeld = controlsHeld or target.buttonDown[KeyF1] or target.buttonDown[KeyEscape] or
@@ -433,10 +464,15 @@ proc main() =
       backButton = physicalButton(pad.name, "B")
       togglePressed = (window.buttonPressed[KeyF1] or pad.buttonPressed(GamepadHome)) and not toggleHeld
       activatePressed = (window.buttonPressed[KeyEnter] or pad.buttonPressed(activateButton)) and not activateHeld
-      backPressed = (window.buttonPressed[KeyEscape] or pad.buttonPressed(backButton)) and not backHeld
+      backPressed = (window.buttonPressed[KeyEscape] or pad.buttonPressed(backButton) or rawBackPressed) and not backHeld
+      menuStick = pad.leftStickYUp()
+      stickPrevious = menuStickReady and menuStick >= 0.6'f32
+      stickNext = menuStickReady and menuStick <= -0.6'f32
+    if abs(menuStick) < 0.3'f32: menuStickReady = true
+    elif stickPrevious or stickNext: menuStickReady = false
     toggleHeld = window.buttonDown[KeyF1] or pad.button(GamepadHome)
     activateHeld = window.buttonDown[KeyEnter] or pad.button(activateButton)
-    backHeld = window.buttonDown[KeyEscape] or pad.button(backButton)
+    backHeld = window.buttonDown[KeyEscape] or pad.button(backButton) or rawBackHeld
     if window.buttonPressed[KeyEscape] and not overlay.isOpen and
         (not suppressButtons or noInput):
       break
@@ -447,8 +483,8 @@ proc main() =
         for (pressed, command) in [
           (backPressed, OverlayBack),
           (activatePressed, OverlayActivate),
-          (window.buttonPressed[KeyUp] or pad.buttonPressed(GamepadUp), OverlayPrevious),
-          (window.buttonPressed[KeyDown] or pad.buttonPressed(GamepadDown), OverlayNext),
+          (window.buttonPressed[KeyUp] or pad.buttonPressed(GamepadUp) or stickPrevious, OverlayPrevious),
+          (window.buttonPressed[KeyDown] or pad.buttonPressed(GamepadDown) or stickNext, OverlayNext),
           (window.buttonPressed[KeyLeft] or pad.buttonPressed(GamepadLeft), OverlayPagePrevious),
           (window.buttonPressed[KeyRight] or pad.buttonPressed(GamepadRight), OverlayPageNext)]:
           if pressed:
@@ -471,6 +507,27 @@ proc main() =
         if point.inside: overlayTransition(overlay.pointerOverlay(point.x, point.y))
     pointerHeld = contactHeld
     if not contactHeld: suppressPointer = false
+    let menuRequest = overlay.takePauseRequest()
+    case menuRequest.kind
+    of PauseNothing: discard
+    of PauseExit: break
+    of PauseSaveSlot:
+      try:
+        session.saveSlot(menuRequest.slot)
+        overlay.completePauseRequest("Saved to slot " & $menuRequest.slot)
+      except CatchableError as error:
+        overlay.completePauseRequest("Save failed: " & error.msg)
+        stderr.writeLine(error.msg & "\n" & error.getStackTrace())
+    of PauseLoadState:
+      try:
+        session.importStateData(readFile(menuRequest.path), menuRequest.path)
+        overlayTransition(overlay.handleOverlay(OverlayToggle))
+        lastSave = getMonoTime()
+        lastCapture = lastSave
+        pointerHeld = false
+      except CatchableError as error:
+        overlay.completePauseRequest("Load failed: " & error.msg)
+        stderr.writeLine(error.msg & "\n" & error.getStackTrace())
     collectAchievements()
     overlay.updateOverlay(now.ticks)
     let fastForwardRequested = not noInput and not suppressButtons and

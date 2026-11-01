@@ -1,7 +1,7 @@
 import
   std/[monotimes, os, sha1],
   pixie,
-  ./[libretro, playercapture, playerprofile, ra_client, ra_types]
+  ./[libretro, playercapture, playerprofile, playerslots, ra_client, ra_types]
 
 when defined(raTesting):
   import ./ra_http
@@ -12,7 +12,7 @@ when defined(raTesting):
 
 type
   CommandKind = enum
-    Configure, Step, Save, ImportState, ExportState, Capture, IdleAchievements, Stop
+    Configure, Step, Save, ImportState, ExportState, Capture, SaveSlot, IdleAchievements, Stop
   Command = object
     kind: CommandKind
     core, rom, saves, state, contents, source: string
@@ -21,6 +21,7 @@ type
     options: seq[CoreOption]
     captureAudio, achievementsEnabled, withList, withState: bool
     buttons: uint16
+    slot: int
     pointerInput: PointerInput
     reusable: Image
     when defined(raTesting):
@@ -30,7 +31,7 @@ type
     libraryName, libraryVersion, savePath: string
     captureDirectory: string
     contents: string
-    stateExport: bool
+    stateExport, stateImport: bool
     stateImported: bool
     av: AvInfo
     image: Image
@@ -55,6 +56,7 @@ type
     libraryName*, libraryVersion*, savePath*: string
     captureDirectory*: string
     stateExport*: bool
+    stateImport*: bool
     av*: AvInfo
     image*: Image
     frames*, videoFrames*, audioFrames*: uint64
@@ -102,6 +104,7 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
       replayCursor = 0
       romHash, coreHash: string
       stateExport = false
+      slots: StateStore
     try:
       let config = mailbox.commands.recv()
       when defined(raTesting):
@@ -125,6 +128,8 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
         captureAudio = config.captureAudio, options = config.options,
         statePath = config.state, stateData = initialState)
       stateExport = session.stateSize() > 0
+      slots = newStateStore(config.saves, config.rom, config.core, config.captureRoot,
+        config.screenstateDirectory)
       if config.captureRoot.len > 0:
         writer = openCaptureWriter(config.captureRoot, config.rom, config.core,
           $session.info.libraryName, $session.info.libraryVersion, config.options,
@@ -135,7 +140,7 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
         session.achievementMemoryProvider())
       var reply = Reply(libraryName: $session.info.libraryName,
         libraryVersion: $session.info.libraryVersion, savePath: owned(session.savePath),
-        av: session.av, stateExport: stateExport,
+        av: session.av, stateExport: stateExport, stateImport: session.canImportState(),
         captureDirectory: (if writer != nil: owned(writer.directory) else: ""),
         shutdown: replaying and replay.inputs.len == 0)
       reply.captureAchievements(runtime)
@@ -193,6 +198,9 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
             raise newException(IOError, "Core does not support screenstates")
           writer.capture(command.reusable,
             (if command.withState: session.exportState() else: ""), command.source)
+        of SaveSlot:
+          if replaying: raise newException(IOError, "Save slots are disabled during replay")
+          slots.saveSlot(command.slot, command.reusable, session.exportState())
         of IdleAchievements: runtime.idle()
         of Stop:
           try:
@@ -302,6 +310,7 @@ proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = fa
   result.savePath = reply.savePath
   result.captureDirectory = reply.captureDirectory
   result.stateExport = reply.stateExport
+  result.stateImport = reply.stateImport
   result.shutdown = reply.shutdown
   result.av = reply.av
   result.acceptAchievements(reply)
@@ -382,6 +391,14 @@ proc exportState*(worker: CoreWorker): string =
   ## Export after all submitted frames without consuming their presentation results.
   var reply = worker.request(Command(kind: ExportState))
   result = move(reply.contents)
+
+proc saveSlot*(worker: CoreWorker, slot: int) =
+  ## Publish matching pixels and state only after the complete slot reaches disk.
+  worker.finishPending()
+  worker.reply.checked()
+  let image = worker.snapshotImage()
+  if image == nil: raise newException(IOError, "No completed frame to save")
+  discard worker.request(Command(kind: SaveSlot, slot: slot, reusable: image))
 
 proc pause*(worker: CoreWorker) =
   ## Quiesce emulation and discard queued PCM before a focus pause.

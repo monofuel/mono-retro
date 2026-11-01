@@ -2,7 +2,7 @@ import
   std/[monotimes, os, osproc, parseopt, posix, strutils, times],
   paddy, pixie, windy,
   retro/[anbernic, display, gamepad, input, launcherui, menu, powercontrol, settings,
-    systeminfo, testerprocess]
+    systeminfo, systemvolume, testerprocess, volumeui]
 
 const
   InputIntervalMs = 8
@@ -75,7 +75,12 @@ proc main() =
     pendingPower = NoAction
     requestedPower = NoAction
     powerRequest: Process
+    volume: SystemVolume
+    volumeUi = newVolumeUi()
+    volumeImage: Image
+    volumeVisible = false
   defer:
+    volume.close()
     if powerRequest != nil: powerRequest.close()
     closeGamepads()
     for device in backInputs: device.close()
@@ -125,6 +130,8 @@ proc main() =
   proc openScreens() =
     ## Recreate display/input ownership after the child has completely exited.
     screen = openDisplay(settings)
+    volume = openSystemVolume(settings)
+    volumeVisible = false
     sizes.setLen(0)
     for index in 0 ..< screen.count():
       sizes.add screen.window(index).framebufferSize
@@ -146,6 +153,15 @@ proc main() =
   openScreens()
   while not stopping and (duration == 0 or (getMonoTime() - started).inSeconds < duration):
     if not screen.poll(escapeCloses = false): break
+    if volume != nil:
+      let
+        nowNs = getMonoTime().ticks
+        changed = volume.poll(nowNs)
+        visible = volume.visible(nowNs)
+      if changed or volumeImage == nil:
+        volumeImage = volumeUi.renderVolume(volume.percent, volume.error, 320, volumeImage)
+      if changed or visible != volumeVisible: dirty = true
+      volumeVisible = visible
     var activationHeld = false
     for rawPad in pollGamepads():
       let
@@ -217,6 +233,8 @@ proc main() =
       else:
         screen.close()
         screen = nil
+        volume.close()
+        volume = nil
         closeGamepads()
         for device in backInputs: device.close()
         backInputs.setLen(0)
@@ -257,6 +275,9 @@ proc main() =
         let
           role = if screen.count() == 1: SingleScreen elif index == 0: TopScreen else: BottomScreen
           rendered = ui.render(state, settings.title, power, lines, screen.width(index), screen.height(index), role)
+        if volumeVisible and role != TopScreen and volumeImage != nil:
+          rendered.image.draw(volumeImage, translate(vec2(
+            ((rendered.image.width - volumeImage.width) div 2).float32, 12)))
         if role != TopScreen: maxScroll = rendered.maxScroll
         screen.present(rendered.image, index)
       let bounded = min(state.scroll, maxScroll)

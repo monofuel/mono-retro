@@ -12,7 +12,10 @@ type
     title*, framebuffer*, audioDevice*, preview*, command*, saveProfile*: string
     display*, drmDevice*, touchName*, gamepad*, batterySupply*: string
     batteryCurrentSupply*: string
+    volumeCard*: string
+    volumeInverted*: bool
     outputs*: seq[string]
+    volumeControls*: seq[string]
     sticks*: seq[StickBinding]
     inputNames*, inputDevices*: seq[string]
     bindings*: seq[Binding]
@@ -84,6 +87,12 @@ proc applyProfile*(settings: var Settings, profile: JsonNode) =
         settings.sticks.add StickBinding(label: stick["label"].getStr(),
           device: stick["device"].getStr(), x: uint16(x), y: uint16(y))
     of "audioDevice": settings.audioDevice = value.getStr()
+    of "volumeCard": settings.volumeCard = value.getStr()
+    of "volumeControls":
+      settings.volumeControls = @[]
+      for control in value:
+        settings.volumeControls.add control.getStr()
+    of "volumeInverted": settings.volumeInverted = value.getBool()
     of "rotation": settings.rotation = value.getInt()
     of "toneKey": settings.toneKey = value.getInt()
     of "bindings":
@@ -123,6 +132,11 @@ proc validate*(settings: Settings) =
     raise newException(ValueError, "Unknown command: " & settings.command)
   if settings.command == "calibrate" and settings.saveProfile.len == 0:
     raise newException(ValueError, "Calibration requires --save-profile:PATH")
+  if settings.volumeCard.len == 0 and settings.volumeControls.len > 0:
+    raise newException(ValueError, "Volume controls require a volume card")
+  for index, control in settings.volumeControls:
+    if control.len == 0 or control in settings.volumeControls[0 ..< index]:
+      raise newException(ValueError, "Volume controls must be unique nonempty names")
 
 proc parseSettings*(arguments: seq[string], detected = genericDevice): Settings =
   result = defaultSettings()

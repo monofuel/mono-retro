@@ -77,7 +77,7 @@ proc hitTest*(areas: OverlayLayout, x, y: float32): OverlayHit =
     if area.contains(x, y):
       return OverlayHit(control: OcRow, index: areas.first + row)
 
-proc paint(ui: OverlayUi, image: Image, text: string, x, y: int,
+proc paint*(ui: OverlayUi, image: Image, text: string, x, y: int,
     size: float32, tint = Text, width = 0) =
   ## Draw bounded, antialiased text onto an opaque application-owned image.
   ui.font.size = size
@@ -86,7 +86,7 @@ proc paint(ui: OverlayUi, image: Image, text: string, x, y: int,
   image.fillText(ui.font.typeset(text, bounds = vec2(width.float32, 0)),
     translate(vec2(x.float32, y.float32)))
 
-proc oneLine(ui: OverlayUi, text: string, size: float32, width: int): string =
+proc oneLine*(ui: OverlayUi, text: string, size: float32, width: int): string =
   ## Ellipsize by Unicode characters so long titles cannot cover other controls.
   ui.font.size = size
   if ui.font.typeset(text).layoutBounds().x <= width.float32:
@@ -110,7 +110,7 @@ proc statusText(snapshot: RaSnapshot): string =
   of RaUnavailable: "No achievements available"
   of RaFailed: "Achievements unavailable"
 
-proc drawButton(ui: OverlayUi, image: Image, area: OverlayRect, label: string) =
+proc drawButton*(ui: OverlayUi, image: Image, area: OverlayRect, label: string) =
   ## Paint one pointer target using the shared layout.
   image.rect(area.x, area.y, area.width, area.height, Panel)
   ui.paint(image, label, area.x + 12, area.y + 9, 16)
