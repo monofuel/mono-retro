@@ -1,5 +1,9 @@
 # Manual verification
 
+On 2026-11-01, monofuel confirmed the deployed RG DS Plus volume controls and
+save-state menu work and approved merging them into master. The scenarios below
+remain the detailed regression checklist.
+
 Agent tests must remain silent. These instructions are for monofuel; they do not
 authorize agents to launch audible playback.
 
