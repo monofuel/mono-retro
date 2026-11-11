@@ -20,6 +20,8 @@ proc main() =
     writeFile(rom, "D")
     let session = openCore(absolutePath("build" / name), rom, directory / name)
     doAssert $session.info.libraryName == "Player fixture"
+    doAssert session.coreOptionValue("fixture_option") == "first"
+    doAssert session.coreOptionValue("missing_option") == ""
     doAssert session.av.geometry.baseWidth == 3 and session.av.timing.fps == 60
     session.step(256)
     doAssert session.takeAudio().len == 0

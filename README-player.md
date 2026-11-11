@@ -447,6 +447,13 @@ Core rendering and audio generation remain enabled. The default discards their
 output; `--copy-video` includes the frontend's normal video conversion but still
 opens no display or audio device. Initialization is excluded from the reported
 mean frame time. Always use a disposable save directory: SRAM is saved on exit.
+For DS comparisons, add `--ds-layout:separate` to select the player's DS options.
+`--option:KEY=VALUE` overrides a registered option and can be repeated;
+`--copy-audio` includes normal PCM capture without playing it. `--warmup:N`
+excludes the first N emulated frames from measurements. The benchmark reports
+effective JIT/renderer options, percent of normal speed, and minimum, median,
+95th-percentile and maximum frame times. `--pause-ms:N` pauses after warmup and
+prints `PROFILE_READY pid=...` so a profiler can attach before measurement.
 For finite full-player runs, add `--no-input` to feed neutral controls to the
 core while keeping exit shortcuts active. The headless benchmark also feeds
 neutral controls by default. This prevents physical input from changing the test workload.

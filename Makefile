@@ -4,6 +4,7 @@ check:
 	nim check src/retro/playerslots.nim
 	nim check tests/test_pausemenu.nim
 	nim check tools/benchmark_core.nim
+	nim check tests/test_benchmark_core.nim
 	nim check tests/test_shipping_profile.nim
 	nim check src/hwtest.nim
 	nim check src/launcher.nim
@@ -107,7 +108,8 @@ player-fixtures:
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC -DFULLPATH tests/fixtures/player_core.c -o build/player-fullpath.so
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC -DOMIT_RUN tests/fixtures/player_core.c -o build/player-missing.so
 	$(CC) -std=c11 -Wall -Wextra -Werror -shared -fPIC -DRA_FIXTURE tests/fixtures/player_core.c -o build/player-ra-fixture.so
-test-player: player-fixtures prepare-lost-in-blue-tool
+test-player: player-fixtures prepare-lost-in-blue-tool benchmark-core
+	nim r -o:build/test-benchmark-core tests/test_benchmark_core.nim
 	nim r -o:build/test-playerslotworker tests/test_playerslotworker.nim
 	nim r -o:build/test-player tests/test_player.nim
 	nim r -o:build/test-playercore tests/test_playercore.nim

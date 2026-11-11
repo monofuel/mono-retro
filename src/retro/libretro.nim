@@ -411,6 +411,10 @@ proc close*(session: CoreSession) =
     session.library = nil
     active = nil
 
+proc coreOptionValue*(session: CoreSession, key: string): string =
+  ## Read the effective option, or an empty string when the core did not register it.
+  session.variables.getOrDefault(key)
+
 proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false,
     options: seq[CoreOption] = @[], statePath = "", captureVideo = true,
     stateData = ""): CoreSession =
