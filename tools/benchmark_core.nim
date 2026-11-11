@@ -1,6 +1,6 @@
 import
-  std/[algorithm, monotimes, os, parseopt, strutils, times],
-  retro/[libretro, playerds, playerprofile]
+  std/[algorithm, monotimes, os, parseopt, sha1, strutils, times],
+  retro/[libretro, playercapture, playerds, playerprofile]
 
 const
   DefaultFrames = 600
@@ -50,8 +50,11 @@ proc main() =
     raise newException(ValueError, Help)
   let
     dual = selectDualScreen(layout, earthboundDs)
+    stateData = if statePath.len > 0:
+        unwrapScreenstate(readFile(statePath), $secureHashFile(romPath), $secureHashFile(corePath))
+      else: ""
     session = openCore(corePath, romPath, saveDirectory, options = dual.options & overrides,
-      statePath = statePath, captureVideo = copyVideo, captureAudio = copyAudio)
+      statePath = statePath, stateData = stateData, captureVideo = copyVideo, captureAudio = copyAudio)
   defer: session.close()
   echo "Core: ", session.info.libraryName, " ", session.info.libraryVersion
   echo "Target FPS: ", session.av.timing.fps

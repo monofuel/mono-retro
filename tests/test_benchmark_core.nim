@@ -1,5 +1,6 @@
 import
-  std/[os, osproc, strutils, tempfiles]
+  std/[os, osproc, sha1, strutils, tempfiles],
+  retro/[libretro, playercapture]
 
 proc main() =
   ## Check option overrides, warmup accounting and failures against the real C ABI.
@@ -28,6 +29,23 @@ proc main() =
       "--option:invalid", "--ds-layout:invalid", "--option:missing=value"]:
     let failed = execCmdEx(quoteShellCommand(arguments & @[option]))
     doAssert failed.exitCode != 0, option
+  let
+    core = absolutePath("build/player-fixture.so")
+    state = directory / "state.png"
+    session = openCore(core, rom, directory / "state-source")
+  session.step(0)
+  writeFile(state, encodeScreenstatePng(session.image, session.exportState(),
+    $secureHashFile(rom), $secureHashFile(core), 1, false))
+  session.close()
+  let restored = execCmdEx(quoteShellCommand(arguments & @["--frames:2", "--load-state:" & state]))
+  doAssert restored.exitCode == 0, restored.output
+  doAssert readFile(trace).contains("binary_state_loaded=1\n")
+  writeFile(rom, "different ROM")
+  let
+    previousSave = readFile(directory / "saves/fixture.srm")
+    rejected = execCmdEx(quoteShellCommand(arguments & @["--frames:2", "--load-state:" & state]))
+  doAssert rejected.exitCode != 0
+  doAssert readFile(directory / "saves/fixture.srm") == previousSave
 
 when isMainModule:
   main()
