@@ -27,6 +27,12 @@ proc main() =
       doAssert samples.len > 0 and samples.len mod 2 == 0
       if not session.image.isOneColor(): varied = true
     doAssert varied and session.audioFrames > 0
+    let checkpoint = session.exportState()
+    doAssert checkpoint.len > 0
+    session.step(0)
+    session.importStateData(checkpoint, "integration checkpoint")
+    session.step(0)
+    validateDsFrame(session.image.width, session.image.height)
   finally:
     session.close()
   let
