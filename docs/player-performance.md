@@ -35,6 +35,35 @@ full speed flawlessly on the RG DS Plus with normal audio. This incorporates
 both the other agent's core optimizations and this frontend's GPU presentation.
 melonDS DS performance remains separate and needs its own profile.
 
+### Paired DRM render-ahead candidate
+
+Windy [202ed94](https://github.com/monofuel/windy/commit/202ed94e7d1f8c3ec283186180315b82f81824f5)
+can draw into a spare GBM buffer while the previous paired flip is pending.
+It releases the old buffer only after both CRTC events and still consumes the
+source pixels before returning. This is available in the fork; adopting the
+new dependency in the installed player is still under evaluation.
+
+Native Panfrost pattern readback and buffer-lifetime tests pass, along with
+framebuffer and private-Xvfb X11 regression checks. A controlled comparison
+builds the same player source/compiler against old and new Windy. Two 600-frame
+river-walking pairs, both with and without automatic captures, show mixed
+sub-percent changes in loop throughput. Presentation waits decrease, but part
+of that time moves into explicit frame pacing. Less time inside the presenter
+does not itself establish a faster game.
+
+Replaying a 4,910-frame segment from manual Lost in Blue testing gives
+**99.56% / 99.62%** paced speed for old/new Windy. Null-backend audio underruns
+decrease **29 to 15**, with one overrun in each run. These single replay runs
+are useful diagnostics, not evidence of clean physical audio or the goal's
+105% processing capacity. Installed r6 core, original saves and normal player
+remain unchanged by these tests.
+
+The manual report still matters: cliff, inventory and title screen feel great,
+but river movement slows down. The existing walking benchmark costs about 5%
+more core throughput than neutral input while missing some real input paths.
+Use verified input recordings and examine slow intervals rather than treating
+neutral-state averages as representative gameplay.
+
 ### Desktop X11 validation
 
 The X11 GPU path reuses native-size Pixie RGBA bytes, forces opaque output in
