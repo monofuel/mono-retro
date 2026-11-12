@@ -58,6 +58,14 @@ are useful diagnostics, not evidence of clean physical audio or the goal's
 105% processing capacity. Installed r6 core, original saves and normal player
 remain unchanged by these tests.
 
+An independent replay check matches all 17 recorded reference images in this
+segment pixel-for-pixel. A different segment from the same session diverges;
+exclude that segment's timings until its replay issue is understood. In the
+verified segment, slower 300-frame river intervals measure about **106–108% core
+capacity** without presentation, leaving little room above the whole-pipeline
+target. The same player source and compiler are used for the presenter pair;
+these tests precede the microphone-support build.
+
 The manual report still matters: cliff, inventory and title screen feel great,
 but river movement slows down. The existing walking benchmark costs about 5%
 more core throughput than neutral input while missing some real input paths.
