@@ -10,7 +10,7 @@ proc testArguments(arguments: openArray[string]): seq[string] =
   let mode = getEnv("MONO_RETRO_TEST_VIDEO", "cpu")
   if mode notin ["cpu", "gpu"]: raise newException(ValueError, "Invalid test video mode")
   result = @arguments
-  result.add(@["--video:" & mode, "--vsync:off", "--achievements:off"])
+  result.add(@["--video:" & mode, "--vsync:off", "--achievements:off", "--microphone:off"])
 
 proc queryTree(d: Display, window: Window, root, parent: ptr Window,
     children: ptr ptr UncheckedArray[Window], count: ptr cuint): cint
@@ -346,10 +346,9 @@ proc testAchievementOverlay(d: Display, directory: string) =
   key(d, bottom, 0xffbe, true)
   key(d, bottom, 0xffbe, false)
   sleep(100)
+  # Enter activates Resume; keep it held while verifying input quarantine.
   key(d, bottom, 0xff0d, true)
   sleep(40)
-  key(d, bottom, 0xffbe, true)
-  key(d, bottom, 0xffbe, false)
   waitFrames(trace, frameCount(trace) + 3)
   doAssert lastValue(trace, "input") == 0, "Held menu Enter leaked Start into the game"
   key(d, bottom, 0xff0d, false)

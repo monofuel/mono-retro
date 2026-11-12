@@ -46,7 +46,7 @@ type
     decompbound: bool
     segment, frame: int
     lastInput: ReplayInput
-    haveLast, closed: bool
+    haveLast, closed, replayDisabled: bool
     failure: string
     logBuffer: string
     logPath, manifestPath, checkpointPath: string
@@ -437,11 +437,16 @@ proc openCaptureWriter*(root, romPath, corePath, coreName, coreVersion: string;
   result.writeMetadata(absolutePath(romPath), absolutePath(corePath))
   result.startWriter()
 
+proc replayEnabled*(writer: CaptureWriter): bool =
+  ## Report whether this session can record all input needed for replay.
+  writer != nil and not writer.replayDisabled
+
 proc beginSegment*(writer: CaptureWriter, state: string) =
   ## Start a new segment with a canonical checkpoint and a zero-based frame count.
   if writer == nil or writer.closed or writer.mailbox == nil:
     raise newException(ValueError, "Capture writer is closed")
   writer.raisePending()
+  if writer.replayDisabled: return
   let checkpoint = if writer.decompbound: canonicalizeState(state) else: state
   if checkpoint.len == 0 or checkpoint.len > MaxStateBytes:
     raise newException(ValueError, "Checkpoint must contain at most 64 MiB of state")
@@ -460,6 +465,7 @@ proc beginSegment*(writer: CaptureWriter, state: string) =
 
 proc recordInput*(writer: CaptureWriter, buttons: uint16, pointerInput: PointerInput) =
   ## Record the input applied to the next executed core frame; repeats stay sparse.
+  if writer != nil and writer.replayDisabled: return
   if writer == nil or writer.closed or writer.segment <= 0 or writer.logPath.len == 0:
     raise newException(ValueError, "Capture segment has not started")
   writer.raisePending()
@@ -476,6 +482,23 @@ proc recordInput*(writer: CaptureWriter, buttons: uint16, pointerInput: PointerI
     writer.haveLast = true
   inc writer.frame
   if writer.logBuffer.len >= InputBufferBytes: writer.flushSegment()
+
+proc disableReplay*(writer: CaptureWriter) =
+  ## Keep images and states while invalidating a segment with unrecorded live input.
+  if writer == nil or writer.replayDisabled: return
+  writer.raisePending()
+  writer.replayDisabled = true
+  if writer.manifestPath.len > 0:
+    writer.mailbox.jobs.send(CaptureJob(kind: FileWrite, path: owned(writer.manifestPath),
+      contents: $(%*{"version": ReplayVersion,
+        "unavailable": "Live microphone input was not recorded"})))
+  writer.logBuffer.setLen(0)
+  writer.logPath = ""
+  writer.manifestPath = ""
+  writer.checkpointPath = ""
+  writer.segment = 0
+  writer.frame = 0
+  writer.haveLast = false
 
 proc capture*(writer: CaptureWriter, image: Image, state = "", reason = "manual") =
   ## Clone owned pixels and queue a plain or self-contained state PNG in the session root.
@@ -574,6 +597,8 @@ proc readReplay*(path: string): ReplayRecording =
     raise newException(ValueError, "Replay manifest is not an object")
   if not document.hasKey("version") or document["version"].getInt != ReplayVersion:
     raise newException(ValueError, "Unsupported replay manifest version")
+  if document.hasKey("unavailable"):
+    raise newException(IOError, "Replay unavailable: " & document["unavailable"].getStr)
   if document["frames"].kind != JInt:
     raise newException(ValueError, "Replay frame count must be an integer")
   let

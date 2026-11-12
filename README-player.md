@@ -85,7 +85,8 @@ seconds of active play, a plain screenshot records its segment and replay-frame
 position in a sidecar. These periodic PNGs are not self-contained screenstates.
 F12 and orderly exit capture full screenstates. A successful state import starts a
 new recording segment. Recording includes every emulated frame during fast-forward,
-not just frames presented on screen, and includes pointer input.
+not just frames presented on screen, and includes pointer input. Sessions using
+live microphone input retain screenshots and screenstates but omit replay recording.
 
 Sessions live under `SAVE_DIR/captures/`; the player prints the full session path.
 F12/controller Share and orderly-exit screenstates also appear in
@@ -382,7 +383,7 @@ Decompbound. Monorig installs this wrapper only on the RG DS Plus; it selects
 Sound is enabled by default. Both libretro callbacks copy signed 16-bit stereo
 PCM before returning to the core. After each emulated frame, the player passes
 the combined samples to Slappy's `StreamingSource` at the core's reported sample
-rate. All Slappy calls stay on the application's main thread, outside C callbacks.
+rate. Slappy playback calls stay on the application's main thread, outside C callbacks.
 OpenAL performs the playback and any output-rate conversion internally.
 
 Playback primes with at least 30 ms of samples. Completed buffers are reclaimed
@@ -402,8 +403,40 @@ source and buffers before destroying the OpenAL context.
 Slappy selects its first available OpenAL output. Backend/device selection is
 handled through OpenAL Soft's normal configuration; volume uses the shared profile-configured system mixer.
 Audio initialization and playback errors stop the player through its normal
-save/cleanup path. Add `--mute` to deliberately discard audio without opening a
-device. OpenAL Soft remains a linked runtime dependency in muted mode.
+save/cleanup path. Add `--mute` to discard speaker audio without opening a
+playback device. Microphone input remains independent of speaker volume.
+OpenAL Soft remains a linked runtime dependency in muted mode.
+
+## Microphone
+
+Microphone input is enabled by default. melonDS DS receives the system's default
+microphone continuously during gameplay, without holding L2. This also applies
+without `--ds-layout`. Use `--microphone:off` to disable capture; combine it with
+`--mute` to open neither playback nor capture devices.
+
+Capture uses Slappy's OpenAL microphone API with signed 16-bit mono PCM at the
+rate requested by the core (44.1 kHz for melonDS DS). Hardware opens only when a
+core requests a microphone. Missing devices or capture failures fall back to
+silence. Capture stops during focus pauses and pause menus; resuming or loading
+a screenstate discards old microphone audio. Fast-forward never waits for input.
+
+The frontend does not record a microphone audio track. Sessions using the microphone
+keep screenshots, screenstates and saves, but omit input replay recordings. A core that first requests
+microphone input mid-session invalidates the current replay segment. Existing
+recordings remain readable. Replay and `--no-input` runs never use a live microphone.
+
+`make test-player` includes synthetic microphone and independent C ABI tests that
+open no audio hardware. To also exercise the pinned melonDS DS core's bundled
+microphone-recording homebrew ROM, run in the player development shell:
+
+```sh
+build/test-playermicrophone \
+  build/cores/melondsds-package/lib/retroarch/cores/melondsds_libretro.so \
+  build/sources/melondsds-1.2.0/test/nds/micrecord.nds
+```
+
+This optional test supplies synthetic PCM and compares recorded playback against
+silence; it never opens a real microphone or plays sound through speakers.
 
 ## Saves
 

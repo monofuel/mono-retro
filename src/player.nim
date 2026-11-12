@@ -15,7 +15,8 @@ const
   AchievementListNs = 250_000_000'i64
   ModalRedrawNs = 16_666_667'i64
   Help = """Usage: mono-retro-player --core:PATH --rom:PATH --save-dir:DIR [--frames:N] [--mute] [--load-state:PATH]
-Libretro player with Slappy audio. --mute opens no audio device.
+Libretro player with Slappy audio. --mute silences speaker output only.
+--microphone:on|off controls microphone capture (default on, always active during gameplay).
 --video:auto|cpu|gpu selects presentation; auto uses X11 textures or paired Panfrost outputs.
 --vsync:on|off controls X11 GPU swaps (default on); off is for diagnostics.
 --no-input requires --frames and feeds neutral controls for repeatable benchmarks.
@@ -54,6 +55,7 @@ proc main() =
     capturesEnabled = true
     limit = 0'u64
     muted = false
+    microphoneEnabled = true
     videoMode = AutoVideo
     vsync = true
     noInput = false
@@ -89,6 +91,11 @@ proc main() =
       if value.len == 0: raise newException(ValueError, "Missing replay segment")
       replayPath = value
     of "mute": muted = true
+    of "microphone":
+      case value
+      of "on": microphoneEnabled = true
+      of "off": microphoneEnabled = false
+      else: raise newException(ValueError, "Expected --microphone:on|off")
     of "video": videoMode = parseVideoMode(value)
     of "vsync":
       case value
@@ -151,7 +158,8 @@ proc main() =
     options = dual.options, statePath = statePath,
     raConfigPath = raConfigPath, achievementsEnabled = achievementsEnabled,
     captureDirectory = (if capturesEnabled: captureDirectory else: ""), replayPath = replayPath,
-    screenstateDirectory = screenstateDirectory)
+    screenstateDirectory = screenstateDirectory,
+    microphoneEnabled = microphoneEnabled and not noInput and replayPath.len == 0)
   defer: session.close()
   if dual.layout != NoDsLayout:
     validateDualGeometry(session.av.geometry.baseWidth.int, session.av.geometry.baseHeight.int, dual.geometry)

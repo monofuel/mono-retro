@@ -17,6 +17,7 @@ check:
 	nim check tests/test_player.nim
 	nim check tests/test_playercore.nim
 	nim check tests/test_playeraudio.nim
+	nim check tests/test_playermicrophone.nim
 	nim check tests/test_playerds.nim
 	nim check tests/test_playerstate.nim
 	nim check tests/test_playerworker.nim
@@ -114,6 +115,7 @@ test-player: player-fixtures prepare-lost-in-blue-tool benchmark-core
 	nim r -o:build/test-player tests/test_player.nim
 	nim r -o:build/test-playercore tests/test_playercore.nim
 	ALSOFT_DRIVERS=null nim r -o:build/test-playeraudio tests/test_playeraudio.nim
+	nim r -o:build/test-playermicrophone tests/test_playermicrophone.nim
 	nim r -o:build/test-playerds tests/test_playerds.nim
 	nim r -o:build/test-earthbound-viewport tests/test_earthbound_viewport.nim
 	nim r -o:build/test-playerstate tests/test_playerstate.nim

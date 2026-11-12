@@ -1,7 +1,7 @@
 import
   std/[monotimes, os, sha1],
   pixie,
-  ./[libretro, playercapture, playerprofile, playerslots, ra_client, ra_types]
+  ./[libretro, playercapture, playermicrophone, playerprofile, playerslots, ra_client, ra_types]
 
 when defined(raTesting):
   import ./ra_http
@@ -12,7 +12,7 @@ when defined(raTesting):
 
 type
   CommandKind = enum
-    Configure, Step, Save, ImportState, ExportState, Capture, SaveSlot, IdleAchievements, Stop
+    Configure, Step, Save, ImportState, ExportState, Capture, SaveSlot, IdleAchievements, Pause, Stop
   Command = object
     kind: CommandKind
     core, rom, saves, state, contents, source: string
@@ -20,6 +20,8 @@ type
     captureRoot, screenstateDirectory, replayPath: string
     options: seq[CoreOption]
     captureAudio, achievementsEnabled, withList, withState: bool
+    microphoneEnabled: bool
+    microphoneFactory: MicrophoneFactory
     buttons: uint16
     slot: int
     pointerInput: PointerInput
@@ -83,13 +85,20 @@ proc captureAchievements(reply: var Reply, runtime: RaRuntime, withList = false)
     reply.raNotices.add(RaNotice(title: owned(notice.title),
       description: owned(notice.description), points: notice.points))
 
-proc closeOwned(runtime: var RaRuntime, session: CoreSession) =
+proc closeOwned(runtime: var RaRuntime, session: CoreSession, microphone: PlayerMicrophone) =
   ## Settle achievement callbacks before unloading the memory they can inspect.
   try:
     runtime.close()
   finally:
     runtime = nil
-    session.close()
+    try: session.close()
+    finally: microphone.close()
+
+proc withoutMicrophoneOptions(options: seq[CoreOption]): seq[CoreOption] =
+  ## Compare replay controls independently of saved microphone policy.
+  for option in options:
+    if option.key notin ["melonds_mic_input", "melonds_mic_input_active"]:
+      result.add(option)
 
 proc emulate(mailbox: ptr Mailbox) {.thread.} =
   ## Own all core calls and callbacks on one thread; transfer unique frame buffers.
@@ -97,6 +106,7 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
   {.cast(gcsafe).}:
     var
       session: CoreSession
+      microphone: PlayerMicrophone
       runtime: RaRuntime
       writer: CaptureWriter
       replay: ReplayRecording
@@ -111,30 +121,40 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
         setRaHttpTestHandler(config.raHttpTestHandler)
       romHash = $secureHashFile(config.rom)
       coreHash = $secureHashFile(config.core)
-      var initialState: string
+      var
+        initialState: string
+        coreOptions = config.options
       if config.replayPath.len > 0:
         replay = readReplay(config.replayPath)
         replaying = true
         if replay.romHash != romHash or replay.coreHash != coreHash:
           raise newException(IOError, "Replay ROM or core build does not match")
-        if replay.options != config.options:
+        if withoutMicrophoneOptions(replay.options) != withoutMicrophoneOptions(config.options):
           raise newException(IOError, "Replay requires the same core options")
+        coreOptions = replay.options
         initialState = replay.checkpoint
       elif config.state.len > 0:
         if getFileSize(config.state) > 64 * 1024 * 1024:
           raise newException(IOError, "State file exceeds supported size")
         initialState = unwrapScreenstate(readFile(config.state), romHash, coreHash)
+      let microphoneEnabled = config.microphoneEnabled and not replaying
+      if microphoneEnabled: microphone = newPlayerMicrophone(config.microphoneFactory)
+      let defaults: seq[CoreOption] = @[
+        ("melonds_mic_input", if microphoneEnabled: "microphone" else: "silence"),
+        ("melonds_mic_input_active", "always")]
       session = openCore(config.core, config.rom, config.saves,
-        captureAudio = config.captureAudio, options = config.options,
-        statePath = config.state, stateData = initialState)
+        captureAudio = config.captureAudio, options = coreOptions,
+        statePath = config.state, stateData = initialState, defaultOptions = defaults,
+        microphoneInterface = (if microphone == nil: nil else: addr microphone.api))
       stateExport = session.stateSize() > 0
       slots = newStateStore(config.saves, config.rom, config.core, config.captureRoot,
         config.screenstateDirectory)
       if config.captureRoot.len > 0:
         writer = openCaptureWriter(config.captureRoot, config.rom, config.core,
-          $session.info.libraryName, $session.info.libraryVersion, config.options,
+          $session.info.libraryName, $session.info.libraryVersion, coreOptions,
           config.screenstateDirectory)
-        if stateExport: writer.beginSegment(session.exportState())
+        if session.microphoneRequested: writer.disableReplay()
+        if stateExport and writer.replayEnabled(): writer.beginSegment(session.exportState())
       runtime = newRaRuntime(config.raConfigPath, config.achievementsEnabled,
         session.supportsAchievements(), session.originalRomPath(), session.originalRomData(),
         session.achievementMemoryProvider())
@@ -150,7 +170,7 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
       try:
         try:
           if writer != nil: writer.close()
-        finally: closeOwned(runtime, session)
+        finally: closeOwned(runtime, session, microphone)
       except CatchableError as cleanupError:
         message.add("\nCore cleanup: " & cleanupError.msg)
       mailbox.replies.send(Reply(error: message))
@@ -162,6 +182,7 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
       try:
         case command.kind
         of Step:
+          microphone.resume()
           if command.reusable != nil: session.image = move(command.reusable)
           let
             previousVideoFrames = session.videoFrames
@@ -169,7 +190,9 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
           let input = if replaying: replay.inputs[replayCursor]
             else: ReplayInput(buttons: command.buttons, pointerInput: command.pointerInput)
           if writer != nil and stateExport: writer.recordInput(input.buttons, input.pointerInput)
-          session.step(input.buttons, input.pointerInput)
+          try: session.step(input.buttons, input.pointerInput)
+          finally:
+            if writer != nil and session.microphoneRequested: writer.disableReplay()
           if replaying: inc replayCursor
           runtime.frame()
           reply.coreTicks = getMonoTime().ticks - started
@@ -187,8 +210,10 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
           if replaying: raise newException(IOError, "State drops are disabled during replay")
           session.importStateData(unwrapScreenstate(command.contents, romHash, coreHash), command.source)
           reply.stateImported = true
+          microphone.reset()
           reply.av = session.av
-          if writer != nil and stateExport: writer.beginSegment(session.exportState())
+          if writer != nil and session.microphoneRequested: writer.disableReplay()
+          if writer.replayEnabled() and stateExport: writer.beginSegment(session.exportState())
           runtime.resetProgress()
           runtime.refreshMemory()
         of ExportState: reply.contents = session.exportState()
@@ -202,6 +227,7 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
           if replaying: raise newException(IOError, "Save slots are disabled during replay")
           slots.saveSlot(command.slot, command.reusable, session.exportState())
         of IdleAchievements: runtime.idle()
+        of Pause: microphone.suspend()
         of Stop:
           try:
             if writer != nil:
@@ -210,7 +236,7 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
                   writer.capture(command.reusable,
                     (if stateExport: session.exportState() else: ""), "exit")
               finally: writer.close()
-          finally: closeOwned(runtime, session)
+          finally: closeOwned(runtime, session, microphone)
         of Configure: raise newException(ValueError, "Core already configured")
         if command.kind != Stop:
           reply.captureAchievements(runtime, command.withList)
@@ -282,8 +308,10 @@ proc close*(worker: CoreWorker) =
 proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = false,
     options: seq[CoreOption] = @[], statePath = "", raConfigPath = "",
     achievementsEnabled = false, captureDirectory = "", replayPath = "",
-    screenstateDirectory = ""): CoreWorker =
+    screenstateDirectory = "", microphoneEnabled = false,
+    microphoneFactory: MicrophoneFactory = nil): CoreWorker =
   ## Load a software core on its dedicated thread with one bounded frame in flight.
+  ## Microphone factories execute on that thread and must not capture caller-owned state.
   result = CoreWorker(mailbox: cast[ptr Mailbox](allocShared0(sizeof(Mailbox))))
   result.mailbox.commands.open(1)
   result.mailbox.replies.open(1)
@@ -292,7 +320,8 @@ proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = fa
     saves: owned(saveDirectory), state: owned(statePath), captureAudio: captureAudio,
     raConfigPath: owned(raConfigPath), achievementsEnabled: achievementsEnabled,
     captureRoot: owned(captureDirectory), replayPath: owned(replayPath),
-    screenstateDirectory: owned(screenstateDirectory))
+    screenstateDirectory: owned(screenstateDirectory), microphoneEnabled: microphoneEnabled,
+    microphoneFactory: microphoneFactory)
   when defined(raTesting):
     config.raHttpTestHandler = workerRaHttpTestHandler
   for option in options: config.options.add((owned(option.key), owned(option.value)))
@@ -406,3 +435,4 @@ proc pause*(worker: CoreWorker) =
   worker.reply.checked()
   worker.reply.audio = @[]
   worker.audio = @[]
+  discard worker.request(Command(kind: Pause))

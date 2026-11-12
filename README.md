@@ -43,7 +43,7 @@ mono-retro builds on Treeform and Guzba's libraries:
 | [Windy](https://github.com/treeform/windy) | X11 windows, framebuffer and DRM/KMS displays, multitouch and GPU presentation. |
 | [Paddy](https://github.com/treeform/paddy) | Gamepad discovery and input. |
 | [Pixie](https://github.com/treeform/pixie) | Images, text and UI drawing. |
-| [Slappy](https://github.com/treeform/slappy) | Player audio through OpenAL. |
+| [Slappy](https://github.com/treeform/slappy) | Player audio and microphone capture through OpenAL. |
 | [NimSIMD](https://github.com/guzba/nimsimd) | ARM NEON pixel conversion. |
 | [Nimby](https://github.com/treeform/nimby) | Dependency management. |
 

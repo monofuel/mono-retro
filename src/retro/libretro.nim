@@ -1,7 +1,7 @@
 import
   std/[dynlib, math, os, strutils, tables],
   pixie,
-  ./[playerformats, playerprofile, playervideo, playersave, ra_types]
+  ./[microphone, playerformats, playerprofile, playervideo, playersave, ra_types]
 
 const
   HeaderDirectory = currentSourcePath.parentDir / "../../third_party"
@@ -32,6 +32,7 @@ const
   GetAudioVideoEnable = 47'u32 or Experimental
   GetInputBitmasks = 51'u32 or Experimental
   GetCoreOptionsVersion = 52'u32
+  GetMicrophoneInterface = 75'u32 or Experimental
 
 {.passC: "-I" & HeaderDirectory.}
 {.compile: "libretrolog.c".}
@@ -86,6 +87,9 @@ type
     saved: string
     variables: Table[string, string]
     options: seq[CoreOption]
+    defaultOptions: seq[CoreOption]
+    microphoneInterface: ptr MicrophoneInterface
+    microphoneRequested*: bool
     failure*: string
     shutdown*: bool
     pixelFormat*: int
@@ -174,6 +178,12 @@ proc environment(command: cuint, data: pointer): bool {.cdecl.} =
   ## Implement the small software-core feature set advertised by this host.
   try:
     case command
+    of GetMicrophoneInterface:
+      if data != nil and active.microphoneInterface != nil and
+          cast[ptr MicrophoneInterface](data).version == MicrophoneVersion:
+        cast[ptr MicrophoneInterface](data)[] = active.microphoneInterface[]
+        active.microphoneRequested = true
+        return true
     of Shutdown:
       active.shutdown = true
       return true
@@ -220,6 +230,11 @@ proc environment(command: cuint, data: pointer): bool {.cdecl.} =
           if separator < 0: raise newException(ValueError, "Malformed core option: " & key)
           let values = description[separator + 1 .. ^1].strip().split('|')
           var value = values[0]
+          for option in active.defaultOptions:
+            if option.key == key:
+              if option.value notin values:
+                raise newException(ValueError, "Invalid default core option: " & key & "=" & option.value)
+              value = option.value
           for option in active.options:
             if option.key == key:
               if option.value notin values:
@@ -417,14 +432,18 @@ proc coreOptionValue*(session: CoreSession, key: string): string =
 
 proc openCore*(corePath, romPath, saveDirectory: string, captureAudio = false,
     options: seq[CoreOption] = @[], statePath = "", captureVideo = true,
-    stateData = ""): CoreSession =
+    stateData = "", microphoneInterface: ptr MicrophoneInterface = nil,
+    defaultOptions: seq[CoreOption] = @[]): CoreSession =
   ## Load one explicitly selected software core and an independent save history.
   ## Disabling captureVideo discards pixels without requesting skipped core rendering.
+  ## Optional defaults apply only to registered keys; explicit options remain strict.
+  ## The caller owns the microphone callback table until this session is closed.
   if active != nil: raise newException(ValueError, "Only one libretro core can be active")
   if not fileExists(corePath): raise newException(IOError, "Missing core: " & corePath)
   if not fileExists(romPath): raise newException(IOError, "Missing ROM: " & romPath)
   result = CoreSession(romPath: absolutePath(romPath), saveDirectory: absolutePath(saveDirectory),
-    captureAudio: captureAudio, captureVideo: captureVideo, options: options)
+    captureAudio: captureAudio, captureVideo: captureVideo, options: options,
+    microphoneInterface: microphoneInterface, defaultOptions: defaultOptions)
   let session = result
   session.systemDirectory = session.saveDirectory / "system"
   session.savePath = session.saveDirectory / romPath.splitFile.name & ".srm"

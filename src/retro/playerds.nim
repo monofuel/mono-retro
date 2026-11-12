@@ -32,8 +32,7 @@ const
     ("melonds_screen_gap", "0"),
     ("melonds_number_of_screen_layouts", "1"),
     ("melonds_touch_mode", "touch"),
-    ("melonds_show_cursor", if ShowDsTouchCursor: "always" else: "disabled"),
-    ("melonds_mic_input", "silence")
+    ("melonds_show_cursor", if ShowDsTouchCursor: "always" else: "disabled")
   ]
 
 proc earthboundDsOptions*(width, height: int): seq[CoreOption] =

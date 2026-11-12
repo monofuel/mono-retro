@@ -20,6 +20,8 @@ static unsigned char memory[16];
 static unsigned frames;
 static char mode;
 static bool xbgr;
+static struct retro_microphone_interface microphone;
+static retro_microphone_t *microphone_handle;
 
 static void trace(const char *event, unsigned value)
 {
@@ -52,6 +54,8 @@ void retro_init(void)
     environment(42u | 0x10000u, &achievements);
 #endif
     xbgr = false;
+    memset(&microphone, 0, sizeof(microphone));
+    microphone_handle = NULL;
     trace("init", 1);
     struct retro_variable variables[] = {
         {"fixture_option", "Example; first|second"},
@@ -62,7 +66,8 @@ void retro_init(void)
         {"melonds_number_of_screen_layouts", "Layouts; 1|2"},
         {"melonds_touch_mode", "Touch; touch|auto"},
         {"melonds_show_cursor", "Cursor; always|disabled"},
-        {"melonds_mic_input", "Mic; silence|noise"},
+        {"melonds_mic_input", "Mic; silence|noise|microphone"},
+        {"melonds_mic_input_active", "Mic activation; hold|toggle|always"},
         {NULL, NULL}
     };
     if (!environment(RETRO_ENVIRONMENT_SET_VARIABLES, variables)) return;
@@ -78,7 +83,37 @@ void retro_init(void)
     if (!environment(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &logging)) abort();
     logging.log(RETRO_LOG_INFO, "Fixture log bridge: %d %s\n", 42, "ok");
 }
-void retro_deinit(void) { trace("deinit", 1); }
+void retro_deinit(void) {
+    if (microphone_handle && mode != 'l') microphone.close_mic(microphone_handle);
+    microphone_handle = NULL;
+    trace("deinit", 1);
+}
+
+static void setup_microphone(void)
+{
+    microphone.interface_version = 99;
+    if (environment(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, &microphone) ||
+        environment(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, NULL)) abort();
+    microphone.interface_version = RETRO_MICROPHONE_INTERFACE_VERSION;
+    bool supported = environment(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, &microphone);
+    trace("mic_supported", supported);
+    if (!supported) return;
+    struct retro_microphone_params params = {44100};
+    microphone_handle = microphone.open_mic(&params);
+    if (!microphone_handle) return;
+    if (microphone.get_mic_state(microphone_handle)) abort();
+    if (!microphone.get_params(microphone_handle, &params) || params.rate != 44100) abort();
+    int16_t sample;
+    if (microphone.read_mic(microphone_handle, &sample, 1) != -1) abort();
+    if (!microphone.set_mic_state(microphone_handle, true)) abort();
+    if (!microphone.get_mic_state(microphone_handle)) abort();
+    struct retro_variable variable = {"melonds_mic_input_active", NULL};
+    if (!environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable)) abort();
+    trace("mic_always", !strcmp(variable.value, "always"));
+    variable.key = "melonds_mic_input";
+    if (!environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable)) abort();
+    trace("mic_input", !strcmp(variable.value, "microphone"));
+}
 void retro_get_system_info(struct retro_system_info *info)
 {
     *info = (struct retro_system_info){
@@ -120,7 +155,8 @@ bool retro_load_game(const struct retro_game_info *game)
     ((unsigned char *)game->data)[game->size - 1] ^= 0xff;
 #endif
 #endif
-    if (mode == 'F') return false;
+    if (mode == 'm' || mode == 'f') setup_microphone();
+    if (mode == 'F' || mode == 'f') return false;
     if (mode == 'E') {
         struct retro_variable variable = {"decompbound_dual_screen", NULL};
         if (!environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) ||
@@ -227,6 +263,12 @@ size_t retro_get_memory_size(unsigned id)
 #ifndef OMIT_RUN
 void retro_run(void)
 {
+    if (mode == 'l' && !frames) setup_microphone();
+    if (microphone_handle) {
+        int16_t mic_samples[4] = {0};
+        if (microphone.read_mic(microphone_handle, mic_samples, 4) != 4) abort();
+        trace("mic_sample", (uint16_t)mic_samples[0]);
+    }
     /* Deliberate row padding detects incorrect packed-row assumptions. */
     uint32_t pixels[] = {0xff0000, 0x00ff00, 0x0000ff, 0xdeadbeef,
                               0xffffff, 0x808080, 0x000000, 0xdeadbeef};
