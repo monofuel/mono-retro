@@ -40,8 +40,8 @@ melonDS DS performance remains separate and needs its own profile.
 Windy [202ed94](https://github.com/monofuel/windy/commit/202ed94e7d1f8c3ec283186180315b82f81824f5)
 can draw into a spare GBM buffer while the previous paired flip is pending.
 It releases the old buffer only after both CRTC events and still consumes the
-source pixels before returning. This is available in the fork; adopting the
-new dependency in the installed player is still under evaluation.
+source pixels before returning. It is now pinned in mono-retro and included in
+the installed microphone-enabled player. The audio prototypes below remain private.
 
 Native Panfrost pattern readback and buffer-lifetime tests pass, along with
 framebuffer and private-Xvfb X11 regression checks. A controlled comparison
