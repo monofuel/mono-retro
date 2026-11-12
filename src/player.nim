@@ -379,7 +379,7 @@ proc main() =
       installStateDrop(screen.window(index))
   when defined(playerTimings):
     resetTimings()
-  when defined(playerTimings) or defined(playerWalkBenchmark):
+  when defined(playerTimings) or defined(playerWalkBenchmark) or defined(playerLoopTimings):
     let loopStarted = getMonoTime()
   when defined(playerTimings):
     let
@@ -632,7 +632,7 @@ proc main() =
   if sound != nil:
     echo "Audio underruns: ", sound.underruns, "; overruns: ", sound.overruns
   printTimings(session.frames)
-  when defined(playerTimings) or defined(playerWalkBenchmark):
+  when defined(playerTimings) or defined(playerWalkBenchmark) or defined(playerLoopTimings):
     echo "Loop milliseconds: ", (getMonoTime() - loopStarted).inMilliseconds
   when defined(playerTimings):
     echo "Loop main-thread CPU milliseconds: ", (cpuTime() - loopCpuStarted) * 1000

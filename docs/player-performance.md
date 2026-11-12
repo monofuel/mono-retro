@@ -72,6 +72,33 @@ more core throughput than neutral input while missing some real input paths.
 Use verified input recordings and examine slow intervals rather than treating
 neutral-state averages as representative gameplay.
 
+### Audio scheduling experiments
+
+The November 12 microphone build is the new source baseline. Two private
+prototypes compare earlier PCM delivery without changing the 30 ms prebuffer or
+100 ms buffer limit: collecting a completed frame's audio while the main thread
+waits, and moving Slappy output onto the core worker. Frame ownership, rate
+changes, resets, cleanup and the existing microphone/worker/audio fixtures pass
+checked ARM64 tests under QEMU. X11 type checks pass; these prototypes have not
+received a full desktop runtime acceptance test.
+
+Three rotating 600-frame runs of each mode use the same r6 core and a heavier
+river checkpoint derived from the verified input recording, with null output
+and microphone disabled. Loop timing excludes initialization/cleanup and uses
+only two timestamps, without detailed per-stage counters.
+
+| Mode | Mean loop milliseconds | Underruns, total | Overruns, total |
+| --- | ---: | ---: | ---: |
+| Current main-thread output | 10,137 | 8 | 1 |
+| Collect ready PCM before the deadline | 10,161 | 13 | 0 |
+| Core-worker output | 10,159 | 15 | 1 |
+
+Neither prototype demonstrates a playback or audio improvement. Keep them out
+of the normal player. These results do not prove audio scheduling can never
+matter, but they do not justify an ownership change for this workload. Native
+profiling instead shows the emulation thread nearly filling the frame budget;
+continue there before adding more frontend machinery.
+
 ### Desktop X11 validation
 
 The X11 GPU path reuses native-size Pixie RGBA bytes, forces opaque output in

@@ -462,6 +462,11 @@ cross-emulator save conversion remain outside this MVP.
 See the [performance roadmap](docs/player-performance.md) for measured limits,
 native-format transport, display-plane/GPU presentation and audio scheduling ideas.
 
+Build with `-d:playerLoopTimings` to print total gameplay-loop milliseconds when
+the player exits, excluding startup and cleanup. It adds only the start/end
+timestamps. `-d:playerTimings` additionally records individual stages for diagnosis;
+use the lighter option when comparing playback throughput.
+
 Cooperating cores can negotiate an [opaque XBGR8888 extension](docs/libretro-extensions.md)
 to pass Pixie-compatible pixel bytes without channel conversion. The frontend
 copies padded rows into owned images; scaling and presentation keep their existing
