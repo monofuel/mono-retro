@@ -103,7 +103,7 @@ continue there before adding more frontend machinery.
 
 A private B7-based player tests holding one completed core reply while the next
 frame runs. It publishes video/PCM at the existing deadline, keeps channel
-capacity one, and adds at most one frame of input lead. FrameClock, the core,
+capacity one, and can add up to one frame of input latency. FrameClock, the core,
 audio buffering and dependencies are unchanged. This is a scheduling experiment,
 not additional CPU capacity; it is not enabled in the shipped player.
 
