@@ -99,6 +99,39 @@ matter, but they do not justify an ownership change for this workload. Native
 profiling instead shows the emulation thread nearly filling the frame budget;
 continue there before adding more frontend machinery.
 
+### Held-frame scheduling experiment
+
+A private B7-based player tests holding one completed core reply while the next
+frame runs. It publishes video/PCM at the existing deadline, keeps channel
+capacity one, and adds at most one frame of input lead. FrameClock, the core,
+audio buffering and dependencies are unchanged. This is a scheduling experiment,
+not additional CPU capacity; it is not enabled in the shipped player.
+
+Both queue modes match all 4,910 frames and 5,372,134 PCM samples of the moving
+river replay, including the actual threaded handoff. Held media remains immutable
+until publication; native lifecycle, save/capture, pause/import, terminal/error
+and finite-limit tests pass.
+
+Two reversed runs per mode give these warmed underrun/overrun counts after
+120 frames, retaining paired GPU rendering and a null audio backend:
+
+| Mode | Ordinary, repeats 1 / 2 | Added-work probe, repeats 1 / 2 |
+| --- | --- | --- |
+| One prefetched frame | 4/1, 0/0 | 5/3, 4/0 |
+| Extra held reply | 0/0, 9/1 | 1/2, 11/0 |
+
+The added-work probe inserts 1/21 frame-period work in each of the core and main
+stages. The held reply does not provide a repeatable improvement or pass the
+reserve target. Paced speed remains approximately 99.89–100.04%; that average
+does not establish smoothness, physical audio quality or uncapped capacity.
+Keep the existing player installed. Further diagnosis includes periodic save
+barriers: waiting for a newer core call can delay presentation of an already
+held frame. This is a source observation, not a confirmed cause of these events.
+
+Private evidence: `monomelon-held-frame-20261113/`, including exact video/PCM
+oracles, per-run logs and source/build manifests. No commercial replay or state
+is a package build input.
+
 ### Desktop X11 validation
 
 The X11 GPU path reuses native-size Pixie RGBA bytes, forces opaque output in
