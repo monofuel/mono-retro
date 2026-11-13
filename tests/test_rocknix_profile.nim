@@ -6,6 +6,19 @@ let profile = parseSettings(@["--device:rg-ds-plus-rocknix"])
 doAssert profile.display == "drm" and profile.outputs == @["DSI-2", "DSI-1"]
 doAssert profile.touchName == "Goodix Capacitive TouchScreen"
 doAssert profile.batterySupply == "battery"
+doAssert profile.audioPrebufferMs == 50
+doAssert parseSettings(@[], rgDsPlusRocknixDevice).audioPrebufferMs == 50
+doAssert defaultSettings().audioPrebufferMs == 30
+doAssert parseSettings(@[], rgSpDevice).audioPrebufferMs == 30
+doAssert parseSettings(@[], rgDsPlusDevice).audioPrebufferMs == 30
+for milliseconds in [0, 101]:
+  var
+    invalid = profile
+    rejected = false
+  invalid.audioPrebufferMs = milliseconds
+  try: invalid.validate()
+  except ValueError: rejected = true
+  doAssert rejected
 doAssert profile.sticks.len == 1 and profile.sticks[0].x == 0 and profile.sticks[0].y == 1
 doAssert identifyDevice("anbernic,rg-ds-plus\0rockchip,rk3568", @["retrogame_joypad"], "", 2) == rgDsPlusRocknixDevice
 doAssert identifyDevice("rockchip,rk3568", @["retrogame_joypad"], "", 2) == genericDevice

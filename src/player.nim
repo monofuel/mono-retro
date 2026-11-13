@@ -219,10 +219,11 @@ proc main() =
     for device in backInputs: device.close()
   var sound: PlayerAudio
   defer: sound.close()
-  if not muted: sound = newPlayerAudio(session.av.timing.sampleRate)
+  if not muted: sound = newPlayerAudio(session.av.timing.sampleRate, settings.audioPrebufferMs)
   posix.signal(SIGINT, stopHandler)
   posix.signal(SIGTERM, stopHandler)
   echo "Core: ", session.libraryName, " ", session.libraryVersion
+  if sound != nil: echo "Audio prebuffer milliseconds: ", settings.audioPrebufferMs
   echo "Save: ", session.savePath
   if session.captureDirectory.len > 0:
     echo "Captures: ", session.captureDirectory

@@ -40,7 +40,12 @@ melonDS DS performance remains separate and needs its own profile.
 The overrun check discounts PCM already consumed from a partly played queue
 head. It queries Slappy's integer sample offset only when the whole-buffer upper
 bound would exceed the cap. Pending, unqueued PCM is never discounted; genuine
-overloads still reset the stream. Defaults remain **30 ms priming / 100 ms cap**.
+overloads still reset the stream. The default is **30 ms priming / 100 ms cap**.
+The DS Plus Rocknix profile selects **50 ms priming**, about one extra DS audio
+frame, to absorb scheduling jitter. Desktop, RG SP and stock-kernel DS Plus
+profiles retain 30 ms. Custom profiles can set `audioPrebufferMs` from 1 to 100;
+the cap remains 100 ms. Priming is clipped to the cap's whole-frame size so the
+100 ms setting also starts at rates that do not divide evenly into milliseconds.
 The only library addition is a generic `StreamingSource.sampleOffset()` getter.
 
 The real-null regression queues 90 ms, waits near its midpoint, then submits
@@ -54,13 +59,14 @@ Two reversed 4,910-frame river replays on r11 give warmed underruns/overruns:
 | --- | --- | --- |
 | Original, 30 ms | 3/1, 7/1 | 19/3, 7/1 |
 | Fixed, 30 ms | 3/0, 0/0 | 7/0, 10/0 |
-| Fixed, private 50 ms trial | 1/0, 0/0 | 5/0, 5/0 |
+| Fixed, 50 ms trial | 1/0, 0/0 | 5/0, 5/0 |
 
 All runs retain 4,910 video frames and 2,686,067 stereo PCM frames, with paired
 GPU displays and null audio. Added load uses a wall-clock spin of 1/21 frame
 period per stage; preemption can reduce its actual CPU consumption. These are
 buffer-event measurements, not physical audio or 105% capacity acceptance.
-The 50 ms setting remains private. Evidence: `monomelon-audio-accounting-parent-20261113/`.
+These r11 trials motivate the profile setting; they do not include the later
+FIFO core optimization. Evidence: `monomelon-audio-accounting-parent-20261113/`.
 
 ### Paired DRM render-ahead candidate
 

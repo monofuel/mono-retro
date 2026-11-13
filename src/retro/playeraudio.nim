@@ -5,7 +5,7 @@ import
 type
   PlayerAudio* = ref object
     stream: StreamingSource
-    frequency: int
+    frequency, prebufferMs: int
     initialized: bool
     started: bool
     underruns*, overruns*: int
@@ -41,9 +41,11 @@ proc close*(audio: PlayerAudio) =
     finally:
       slappyClose()
 
-proc newPlayerAudio*(sampleRate: float): PlayerAudio =
-  ## Open Slappy's selected audio device for one stereo PCM stream.
-  result = PlayerAudio(frequency: audioFrequency(sampleRate))
+proc newPlayerAudio*(sampleRate: float, prebufferMs = PrebufferMs): PlayerAudio =
+  ## Open stereo PCM output with the requested priming duration in milliseconds.
+  if prebufferMs notin 1..MaxBufferedMs:
+    raise newException(ValueError, "Audio prebuffer must be between 1 and " & $MaxBufferedMs & " ms")
+  result = PlayerAudio(frequency: audioFrequency(sampleRate), prebufferMs: prebufferMs)
   slappyInit()
   result.initialized = true
   try:
@@ -109,8 +111,9 @@ proc submit*(audio: PlayerAudio, samples: seq[int16], sampleRate: float) =
   copyMem(addr bytes[0], unsafeAddr samples[first], bytes.len)
   if audio.chunks.len == 0:
     audio.pending.add(bytes)
-    if audio.pending.len div FrameBytes <
-        (frequency * PrebufferMs + MillisecondsPerSecond - 1) div MillisecondsPerSecond:
+    let minimum = min(maximum,
+      (frequency * audio.prebufferMs + MillisecondsPerSecond - 1) div MillisecondsPerSecond)
+    if audio.pending.len div FrameBytes < minimum:
       return
     bytes = move(audio.pending)
   audio.stream.queueData(bytes)

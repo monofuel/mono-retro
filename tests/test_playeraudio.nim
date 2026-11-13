@@ -7,6 +7,7 @@ const
   FollowingFrames = 1440 # Thirty milliseconds, making the whole sum 120 ms.
   PartialHeadWaitMs = 45
   PartialHeadAttempts = 8
+  CappedSampleRate = 32728
 
 proc main() =
   ## Exercise the real streaming adapter with OpenAL Soft's null backend.
@@ -17,6 +18,11 @@ proc main() =
     except ValueError: rejected = true
     doAssert rejected
   doAssert audioFrequency(32768.4) == 32768
+  for milliseconds in [0, MaxBufferedMs + 1]:
+    var rejected = false
+    try: discard newPlayerAudio(48000, milliseconds)
+    except ValueError: rejected = true
+    doAssert rejected
   let audio = newPlayerAudio(48000)
   defer: audio.close()
   let
@@ -74,5 +80,29 @@ proc main() =
   audio.close()
   let again = newPlayerAudio(32000)
   again.close()
+  let longer = newPlayerAudio(48000, 50)
+  defer: longer.close()
+  for index in 0..<4: longer.submit(small, 48000)
+  sleep(80)
+  longer.pump()
+  doAssert longer.bufferedFrames() == 480 * 4
+  doAssert longer.underruns == 0
+  longer.submit(small, 48000)
+  let longerDeadline = getMonoTime() + initDuration(seconds = 2)
+  while longer.bufferedFrames() > 0:
+    doAssert getMonoTime() < longerDeadline
+    sleep(10)
+    longer.pump()
+  doAssert longer.underruns == 1
+  longer.close()
+  let capped = newPlayerAudio(CappedSampleRate, MaxBufferedMs)
+  defer: capped.close()
+  capped.submit(newSeq[int16](CappedSampleRate * MaxBufferedMs div 1000 * 2), CappedSampleRate)
+  let cappedDeadline = getMonoTime() + initDuration(seconds = 2)
+  while capped.bufferedFrames() > 0:
+    doAssert getMonoTime() < cappedDeadline
+    sleep(10)
+    capped.pump()
+  doAssert capped.underruns == 1
 
 main()

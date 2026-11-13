@@ -9,6 +9,7 @@
     "DSI-1"
   ],
   "audioDevice": "mono_retro_ds_plus",
+  "audioPrebufferMs": 50,
   "volumeCard": "aw88166",
   "volumeControls": [
     "Left PCM",

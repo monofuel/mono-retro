@@ -19,9 +19,11 @@ type
     sticks*: seq[StickBinding]
     inputNames*, inputDevices*: seq[string]
     bindings*: seq[Binding]
-    rotation*, touchRotation*, seconds*, toneKey*: int
+    rotation*, touchRotation*, seconds*, toneKey*, audioPrebufferMs*: int
 
 const
+  DefaultAudioPrebufferMs = 30
+  MaxAudioPrebufferMs = 100
   RgSpProfile = staticRead("../../profiles/rg-sp.json")
   RgDsPlusProfile = staticRead("../../profiles/rg-ds-plus.json")
   RgDsPlusRocknixProfile = staticRead("../../profiles/rg-ds-plus-rocknix.json")
@@ -58,11 +60,13 @@ proc detectDevice*(): DeviceKind =
   identifyDevice(compatible, inputs, framebufferSize, dsiCount)
 
 proc defaultSettings*(): Settings =
+  ## Return defaults for an unprofiled device.
   Settings(title: "LINUX HANDHELD", framebuffer: "/dev/fb0", audioDevice: "default",
     display: "auto", drmDevice: "/dev/dri/card0", gamepad: "paddy",
-    command: "test", seconds: 300, toneKey: 315)
+    command: "test", seconds: 300, toneKey: 315, audioPrebufferMs: DefaultAudioPrebufferMs)
 
 proc applyProfile*(settings: var Settings, profile: JsonNode) =
+  ## Apply explicit JSON settings while retaining unspecified defaults.
   for key, value in profile:
     case key
     of "title": settings.title = value.getStr()
@@ -87,6 +91,7 @@ proc applyProfile*(settings: var Settings, profile: JsonNode) =
         settings.sticks.add StickBinding(label: stick["label"].getStr(),
           device: stick["device"].getStr(), x: uint16(x), y: uint16(y))
     of "audioDevice": settings.audioDevice = value.getStr()
+    of "audioPrebufferMs": settings.audioPrebufferMs = value.getInt()
     of "volumeCard": settings.volumeCard = value.getStr()
     of "volumeControls":
       settings.volumeControls = @[]
@@ -113,6 +118,9 @@ proc applyProfile*(settings: var Settings, profile: JsonNode) =
     else: raise newException(ValueError, "Unknown profile setting: " & key)
 
 proc validate*(settings: Settings) =
+  ## Validate device settings before opening hardware.
+  if settings.audioPrebufferMs notin 1..MaxAudioPrebufferMs:
+    raise newException(ValueError, "Audio prebuffer must be between 1 and " & $MaxAudioPrebufferMs & " ms")
   if settings.gamepad notin ["paddy", "raw"]:
     raise newException(ValueError, "Gamepad must be paddy or raw")
   if settings.rotation notin [0, 90, 180, 270]:
