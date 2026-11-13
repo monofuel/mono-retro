@@ -96,9 +96,15 @@ proc submit*(audio: PlayerAudio, samples: seq[int16], sampleRate: float) =
     maximum = max(1, frequency * MaxBufferedMs div MillisecondsPerSecond)
     frames = min(samples.len div Channels, maximum)
     first = samples.len - frames * Channels
-  if audio.bufferedFrames() + frames > maximum:
-    inc audio.overruns
-    audio.reset()
+    buffered = audio.bufferedFrames()
+  if buffered + frames > maximum:
+    let consumed = int(audio.stream.sampleOffset())
+    checkAudio()
+    if consumed < 0 or consumed > buffered - audio.pending.len div FrameBytes:
+      raise newException(IOError, "OpenAL sample offset is outside queued PCM")
+    if buffered - consumed + frames > maximum:
+      inc audio.overruns
+      audio.reset()
   var bytes = newSeq[uint8](frames * FrameBytes)
   copyMem(addr bytes[0], unsafeAddr samples[first], bytes.len)
   if audio.chunks.len == 0:

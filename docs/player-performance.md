@@ -35,6 +35,33 @@ full speed flawlessly on the RG DS Plus with normal audio. This incorporates
 both the other agent's core optimizations and this frontend's GPU presentation.
 melonDS DS performance remains separate and needs its own profile.
 
+### Queued-audio accounting
+
+The overrun check discounts PCM already consumed from a partly played queue
+head. It queries Slappy's integer sample offset only when the whole-buffer upper
+bound would exceed the cap. Pending, unqueued PCM is never discounted; genuine
+overloads still reset the stream. Defaults remain **30 ms priming / 100 ms cap**.
+The only library addition is a generic `StreamingSource.sampleOffset()` getter.
+
+The real-null regression queues 90 ms, waits near its midpoint, then submits
+30 ms. It requires both chunks retained without a reset; the original adapter
+fails and the fix passes on the DS Plus. A separate scripted fixture checks
+PCM ordering, genuine overloads, cursor validity and unqueue rebasing.
+
+Two reversed 4,910-frame river replays on r11 give warmed underruns/overruns:
+
+| Adapter | Ordinary playback, repeats 1 / 2 | Added-load playback, repeats 1 / 2 |
+| --- | --- | --- |
+| Original, 30 ms | 3/1, 7/1 | 19/3, 7/1 |
+| Fixed, 30 ms | 3/0, 0/0 | 7/0, 10/0 |
+| Fixed, private 50 ms trial | 1/0, 0/0 | 5/0, 5/0 |
+
+All runs retain 4,910 video frames and 2,686,067 stereo PCM frames, with paired
+GPU displays and null audio. Added load uses a wall-clock spin of 1/21 frame
+period per stage; preemption can reduce its actual CPU consumption. These are
+buffer-event measurements, not physical audio or 105% capacity acceptance.
+The 50 ms setting remains private. Evidence: `monomelon-audio-accounting-parent-20261113/`.
+
 ### Paired DRM render-ahead candidate
 
 Windy [202ed94](https://github.com/monofuel/windy/commit/202ed94e7d1f8c3ec283186180315b82f81824f5)
