@@ -132,6 +132,14 @@ Private evidence: `monomelon-held-frame-20261113/`, including exact video/PCM
 oracles, per-run logs and source/build manifests. No commercial replay or state
 is a package build input.
 
+A follow-up defers periodic saves until the pending reply has completed. It
+also matches every-frame output but fails playback/reserve repeats: ordinary
+queue1 has 0/0, 1/0 events versus queue2 2/2, 4/1; added-work queue1 has 6/3,
+6/2 versus queue2 8/3, 14/1. Simple polling deferral can also starve saves under
+sustained load, so any future design needs retry opportunities at completed
+harvest/step boundaries. No queued variant is promoted. Follow-up evidence:
+`monomelon-held-save-ready-20261113/`.
+
 ### Desktop X11 validation
 
 The X11 GPU path reuses native-size Pixie RGBA bytes, forces opaque output in
