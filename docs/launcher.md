@@ -6,6 +6,10 @@ The primary screen has a battery percentage/status toolbar. On DS Plus the
 menu stays above while details, touch actions and System Info appear below.
 Lost in Blue appears after Decompbound when its launch wrapper is installed.
 
+See [games-card storage](storage.md) for the second-card mount and persistent
+data layout. Existing test wrappers remain separate from everyday card-backed
+play until library integration is configured.
+
 Use D-pad/stick or keyboard arrows to select, physical A/Enter to open, and
 B/Back/Escape to return. The information page scrolls with D-pad/stick, mouse
 wheel or a bottom-screen drag. Mouse clicks select rows; the Open button
