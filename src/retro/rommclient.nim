@@ -214,7 +214,8 @@ proc refreshCollections*(client: RommClient, paths: LibraryPaths, index: var Lib
   paths.saveIndex(index)
 
 proc syncCatalogue*(client: RommClient, paths: LibraryPaths,
-    config: LibraryConfig, index: var LibraryIndex, progress: LibraryProgress) =
+    config: LibraryConfig, index: var LibraryIndex, progress: LibraryProgress,
+    platforms: seq[string] = @[]) =
   ## Refresh selected collections, adopting matching games before downloading.
   client.refreshCollections(paths, index)
   for game in index.games:
@@ -233,12 +234,17 @@ proc syncCatalogue*(client: RommClient, paths: LibraryPaths,
     elif matches.kind == JArray and matches.len == 1:
       client.updateMetadata(paths, game, matches[0])
     paths.saveIndex(index)
-  for collection in index.collections:
-    if not collection.selected: continue
+  var queries: seq[string]
+  if platforms.len > 0:
+    queries.add "/api/roms?"
+  else:
+    for collection in index.collections:
+      if collection.selected: queries.add "/api/roms?collection_id=" & $collection.id & "&"
+  for query in queries:
     var offset = 0
     while true:
-      let page = client.jsonRequest("GET", "/api/roms?collection_id=" & $collection.id &
-        "&limit=50&offset=" & $offset & "&with_rom_id_index=false&with_filter_values=false&with_char_index=false")
+      let page = client.jsonRequest("GET", query & "limit=50&offset=" & $offset &
+        "&with_rom_id_index=false&with_filter_values=false&with_char_index=false")
       let items = page["items"]
       for node in items:
         let
@@ -246,13 +252,13 @@ proc syncCatalogue*(client: RommClient, paths: LibraryPaths,
           filename = node.stringField("fs_name")
           platform = platformFor(filename)
         if hash.len != 40 or platform.len == 0 or filename.extractFilename != filename: continue
+        if platforms.len > 0 and platform notin platforms: continue
         var game: LibraryGame
         for local in index.games:
           if local.hash == hash: game = local; break
         if game == nil:
           game = LibraryGame(hash: hash, title: node.stringField("name", filename), platform: platform)
           game.core = config.coreFor(game)
-          if game.core.len == 0: continue
           let folder = paths.root.inside("Roms/" & platform.toUpperAscii())
           createDir(folder)
           var destination = folder / filename

@@ -4,14 +4,16 @@ import
 
 const
   Help = """Usage: mono-retro-library COMMAND --library:DIR --config:FILE [options]
-Commands: scan, sync, sync-saves, pair, probe, status, collections, select, favourite,
+Commands: scan, sync, sync-games, sync-saves, pair, probe, status, collections, select, favourite,
           played, resolve, disconnect.
 Options: --game:SHA1 --id:N --choice:local|server --name:NAME --progress:FILE.
+sync-games --platforms:gb,gba,nes,snes downloads matching games without syncing saves.
 Pair prints the complete browser approval link, never an account password or token.
 """
 
 proc runLibraryCommand*(command, root, configPath, gameHash: string,
-    collectionId: int, name, choice: string, progress: LibraryProgress): JsonNode =
+    collectionId: int, name, choice: string, progress: LibraryProgress,
+    platforms: seq[string] = @[]): JsonNode =
   ## Share library operations between the CLI and the launcher's worker process.
   let
     paths = libraryPaths(root, configPath)
@@ -74,7 +76,7 @@ proc runLibraryCommand*(command, root, configPath, gameHash: string,
         found = true
     if not found: raise newException(ValueError, "Collection not found; sync RomM first")
     paths.saveIndex(index)
-  of "sync", "sync-saves", "collections", "resolve":
+  of "sync", "sync-games", "sync-saves", "collections", "resolve":
     let client = newRommClient(config.rommUrl,
       loadCredentials(paths.credentials, apiOrigin(config.rommUrl)))
     defer: client.close()
@@ -82,11 +84,11 @@ proc runLibraryCommand*(command, root, configPath, gameHash: string,
       client.resolveSave(paths, config, index, gameHash, choice)
     elif command == "collections":
       client.refreshCollections(paths, index)
-    elif command == "sync":
+    elif command in ["sync", "sync-games"]:
       index = paths.scanLibrary(config)
       paths.saveIndex(index)
-      client.syncCatalogue(paths, config, index, progress)
-    if command notin ["collections", "resolve"]:
+      client.syncCatalogue(paths, config, index, progress, platforms)
+    if command notin ["collections", "resolve", "sync-games"]:
       client.syncSaves(paths, config, index, progress, gameHash)
   else: raise newException(ValueError, Help)
   %*{"message": "Ready", "games": index.games.len}
@@ -101,6 +103,7 @@ proc main() =
     name = "mono-retro handheld"
     collectionId = 0
     arguments: seq[string]
+    platforms: seq[string]
   for index in 2 .. paramCount(): arguments.add paramStr(index)
   var parser = initOptParser(arguments)
   for kind, key, value in parser.getopt():
@@ -113,6 +116,11 @@ proc main() =
     of "choice": choice = value
     of "name": name = value
     of "progress": progressPath = value
+    of "platforms":
+      platforms = value.toLowerAscii().split(',')
+      for platform in platforms:
+        if platform notin ["gb", "gbc", "gba", "nes", "snes", "nds"]:
+          raise newException(ValueError, "Unknown download platform: " & platform)
     else: raise newException(ValueError, Help)
   proc report(message: string) =
     ## Share status without passing private device codes or tokens to the UI.
@@ -123,7 +131,7 @@ proc main() =
       stdout.flushFile()
   try:
     var result = runLibraryCommand(paramStr(1), root, configPath, gameHash,
-      collectionId, name, choice, report)
+      collectionId, name, choice, report, platforms)
     result["running"] = %false
     if progressPath.len > 0: writeSave(progressPath, $result)
     stdout.writeLine($result)

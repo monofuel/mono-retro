@@ -141,6 +141,7 @@ proc platformFor*(path: string): string =
   of ".gba": "gba"
   of ".gb": "gb"
   of ".gbc": "gbc"
+  of ".nes": "nes"
   of ".smc", ".sfc": "snes"
   else: ""
 

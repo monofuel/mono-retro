@@ -88,5 +88,12 @@ proc main() =
     doAssert area.x >= 0 and area.y >= 0
     doAssert area.x + area.width <= 640
     doAssert area.y + area.height < layout.play.y
+  let nes = root / "Roms" / "Fixture.nes"
+  writeFile(nes, "synthetic NES cartridge")
+  index = paths.scanLibrary(config)
+  doAssert index.games.len == 3
+  for item in index.games:
+    if item.path == "Roms/Fixture.nes":
+      doAssert item.platform == "nes" and item.core.len == 0
 
 main()

@@ -57,10 +57,11 @@ Core libraries remain externally installed artifacts.
 - DS Plus: covers and touch controls below, selected-game details above.
   Single-screen devices use the same grid with a separate details page.
 
-The scanner recognizes loose `.nds`, `.gba`, `.gb`, `.gbc`, `.smc` and `.sfc`
+The scanner recognizes loose `.nds`, `.gba`, `.gb`, `.gbc`, `.nes`, `.smc` and `.sfc`
 files. It does not patch, trim, rename or extract existing ROMs. Content hashes
 separate same-named revisions and retain favourites/history when files move.
 Games without a configured installed core cannot launch.
+They can still be downloaded and browsed before an emulator is selected.
 
 Each game uses `mono-retro/saves/<core>/<ROM-SHA1>/` for cartridge data,
 system files, state slots and recorded sessions. Exported screenstates go to
@@ -112,12 +113,15 @@ mono-retro-library status --library:/media/games --config:/etc/mono-retro/librar
 mono-retro-library probe --config:/etc/mono-retro/library.json
 mono-retro-library pair --library:/media/games --config:/etc/mono-retro/library.json
 mono-retro-library sync --library:/media/games --config:/etc/mono-retro/library.json
+mono-retro-library sync-games --platforms:gb,gba,nes,snes --library:/media/games --config:/etc/mono-retro/library.json
 ```
 
 Additional commands are `collections`, `select --id:N`, `favourite --game:SHA1`,
 `played --game:SHA1`, `sync-saves --game:SHA1`, `resolve --game:SHA1
 --choice:local|server`, and `disconnect`. Status output contains no credentials.
 Writers use a process lock and atomically publish the portable index.
+`sync-games` leaves saves unchanged. With `--platforms`, it downloads all matching
+games in the server library; otherwise it uses the selected collections.
 
 Monorig's `tools/handheld_library.nim HOST CARD_UUID [EARTHBOUND_SHA1]`
 emits the secret-free mount/configuration script for either handheld. It

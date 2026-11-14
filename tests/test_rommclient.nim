@@ -156,6 +156,19 @@ proc main() =
   doAssert readFile(root / game.path) == RomBytes
   doAssert game.rommId == 15
   doAssert game.rommOrigin == origin
+  let
+    unconfiguredPaths = libraryPaths(root / "unconfigured", paths.config)
+    unconfigured = LibraryConfig(playerPath: "/player", rommUrl: origin)
+  createDir(unconfiguredPaths.root)
+  unconfiguredPaths.prepareStorage(unconfigured)
+  var unconfiguredIndex = unconfiguredPaths.loadIndex()
+  connected.syncCatalogue(unconfiguredPaths, unconfigured, unconfiguredIndex, progress, @["nes"])
+  doAssert unconfiguredIndex.games.len == 0
+  connected.syncCatalogue(unconfiguredPaths, unconfigured, unconfiguredIndex, progress, @["nds"])
+  doAssert unconfiguredIndex.games.len == 1
+  doAssert unconfiguredIndex.games[0].core.len == 0
+  doAssert readFile(unconfiguredPaths.root / unconfiguredIndex.games[0].path) == RomBytes
+  rejected(proc() = discard unconfiguredPaths.gameArguments(unconfigured, unconfiguredIndex.games[0]))
   let save = paths.gameSaveDir(game) / "Fixture.srm"
   createDir(save.parentDir)
   writeSave(save, "original local save")
