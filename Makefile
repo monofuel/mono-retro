@@ -1,5 +1,9 @@
 .PHONY: check test test-audio build arm64
 check:
+	nim check src/librarycli.nim
+	nim check tests/test_gamelibrary.nim
+	nim check tests/test_rommclient.nim
+	nim check tests/test_libraryview.nim
 	nim check src/retro/systemvolume.nim
 	nim check src/retro/playerslots.nim
 	nim check tests/test_pausemenu.nim
@@ -29,6 +33,9 @@ check:
 	nim check tools/prepare_lost_in_blue.nim
 test:
 	mkdir -p build
+	nim r -o:build/test-gamelibrary tests/test_gamelibrary.nim
+	nim r -o:build/test-rommclient tests/test_rommclient.nim
+	nim r -o:build/test-libraryview tests/test_libraryview.nim
 	nim r -o:build/test-shipping-profile tests/test_shipping_profile.nim
 	nim r tests/test_hardware.nim
 	nim r tests/test_gamepad.nim
@@ -66,17 +73,26 @@ combined-arm64:
 	mkdir -p build
 	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=x11,fbdev,drm nim c -o:build/hwtest-combined-arm64 src/hwtest.nim
 
-.PHONY: launcher-desktop launcher-handhelds
-launcher-desktop: desktop
+.PHONY: launcher-desktop launcher-handhelds library-desktop library-handhelds test-library-x11
+library-desktop:
+	mkdir -p build
+	nim c -o:build/mono-retro-library src/librarycli.nim
+library-handhelds:
+	mkdir -p build
+	MONO_RETRO_TARGET=arm64 nim c -o:build/mono-retro-library-arm64 src/librarycli.nim
+launcher-desktop: desktop library-desktop
 	MONO_RETRO_BACKENDS=x11 nim c -o:build/mono-retro src/launcher.nim
 	cp build/hwtest-desktop build/mono-retro-hwtest
-launcher-handhelds: handhelds
+launcher-handhelds: handhelds library-handhelds
 	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=fbdev,drm nim c -o:build/mono-retro-arm64 src/launcher.nim
 	cp build/hwtest-handhelds build/mono-retro-hwtest-arm64
 
 .PHONY: test-launcher-x11
 test-launcher-x11: launcher-desktop
 	nim r tests/integration_launcher_x11.nim
+
+test-library-x11: launcher-desktop
+	nim r tests/integration_library_x11.nim
 
 .PHONY: player-desktop player-rg-sp player-rg-ds-plus player-fixtures test-player test-player-x11
 player-desktop:

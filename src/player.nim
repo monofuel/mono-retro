@@ -26,6 +26,7 @@ F12 or controller Share captures a resumable screenstate (including both screens
 Captures: periodic screenshots every 5s, input recording, and a final exit screenstate.
 F12 and exit screenstates also appear in ~/Pictures/Screenshots/.
 --capture-dir:DIR overrides SAVE_DIR/captures; --captures:off disables capture/recording.
+--screenstate-dir:DIR overrides ~/Pictures/Screenshots for exported screenstates.
 --replay:SEGMENT.json restores and replays a recorded segment with matching core/options.
 Arrows: D-pad. X/Z: A/B. A/S: L/R. PageUp/PageDown: L2/R2. Enter: Start. Backspace: Select.
 Hold controller R2 or keyboard Tab for up to 4x fast-forward with audio muted.
@@ -52,6 +53,7 @@ proc main() =
   ## Run one core with an independent save directory.
   var
     corePath, romPath, saveDirectory, statePath, captureDirectory, replayPath: string
+    screenstateDirectory = getHomeDir() / "Pictures" / "Screenshots"
     capturesEnabled = true
     limit = 0'u64
     muted = false
@@ -82,6 +84,9 @@ proc main() =
     of "capture-dir":
       if value.len == 0: raise newException(ValueError, "Missing capture directory")
       captureDirectory = value
+    of "screenstate-dir":
+      if value.len == 0: raise newException(ValueError, "Missing screenstate directory")
+      screenstateDirectory = absolutePath(value)
     of "captures":
       case value
       of "on": capturesEnabled = true
@@ -149,7 +154,6 @@ proc main() =
     if limit == 0: raise newException(ValueError, "Walking benchmark requires --frames")
     if noInput: raise newException(ValueError, "Walking benchmark cannot use --no-input")
   let dual = selectDualScreen(dsLayout, earthboundDs, viewportWidth, viewportHeight)
-  let screenstateDirectory = getHomeDir() / "Pictures" / "Screenshots"
   var settings = parseSettings(displayArguments, detectDevice())
   let desktop = settings.displayBackend() == "x11"
   let desktopGpu = desktop and videoMode != CpuVideo

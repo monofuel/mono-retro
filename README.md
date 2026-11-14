@@ -44,6 +44,7 @@ mono-retro builds on Treeform and Guzba's libraries:
 | [Paddy](https://github.com/treeform/paddy) | Gamepad discovery and input. |
 | [Pixie](https://github.com/treeform/pixie) | Images, text and UI drawing. |
 | [Slappy](https://github.com/treeform/slappy) | Player audio and microphone capture through OpenAL. |
+| [Curly](https://github.com/treeform/curly) | RomM authorization, API requests and streamed downloads. |
 | [NimSIMD](https://github.com/guzba/nimsimd) | ARM NEON pixel conversion. |
 | [Nimby](https://github.com/treeform/nimby) | Dependency management. |
 
@@ -79,7 +80,7 @@ cd mono-retro
 nimby sync nimby.lock
 ```
 
-Desktop builds need libudev, libevdev, libX11, libXcursor, OpenGL/GLX, OpenAL Soft and
+Desktop builds need libudev, libevdev, libX11, libXcursor, OpenGL/GLX, OpenAL Soft, libcurl and
 OpenSSL. The tester also uses ALSA for its tone. On NixOS, enter
 `nix-shell shell-player.nix` before building.
 
@@ -102,6 +103,7 @@ make check test test-player
 
 ## Guides
 
+- [Game library](docs/library.md): cover browsing, card-backed saves and RomM pairing/sync.
 - [Player](README-player.md): cores, controls, saves, state imports and DS layouts.
 - [Launcher](docs/launcher.md): navigation, battery status and handheld installation.
 - [Hardware test](docs/hardware-test.md): display, input, sound and calibration.

@@ -96,7 +96,10 @@ replay sidecars stay together. Existing files are preserved by adding a numeric
 suffix on a name collision. Five-second plain screenshots remain session-only.
 Use `--capture-dir:DIR` to choose another location or `--captures:off` to disable
 capture and recording for benchmarks; `--capture-dir` changes the session root,
-while screenstates still appear in the Pictures folder. PNG compression and disk writes run on a
+while exported screenstates default to the Pictures folder. Use
+`--screenstate-dir:DIR` to change that export destination; the library launcher
+selects the games card's `mono-retro/screenshots/` folder.
+PNG compression and disk writes run on a
 separate writer thread; the core's state is copied between frames on its owner thread.
 Exit waits for queued writes to finish. Cores without state export retain plain
 image captures, but cannot produce screenstates or replay recordings.

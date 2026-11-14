@@ -1,6 +1,7 @@
 { pkgs ? import <nixpkgs> { } }:
 let
   runtime = with pkgs; [
+    curl
     systemd
     libevdev
     openal

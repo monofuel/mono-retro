@@ -14,3 +14,6 @@ ws 0.5.0 https://github.com/treeform/ws cbb8f763b436669392d10baec2a45778395395cc
 slappy 0.4.0 https://github.com/monofuel/slappy 70081499d5ae70b672143e4b3d3bb87ad2473786
 openal 0.2.0 https://github.com/treeform/openal 1882b562f3d550959794f8b09a1d7538404f300c
 supersnappy 2.1.4 https://github.com/guzba/supersnappy 4fed6553d539cbbfb17ab5fea16a58b4f1916e7d
+curly 1.1.1 https://github.com/treeform/curly a0f42baacbc48f4e5924b18854c0df9dcc251466
+webby 0.2.1 https://github.com/treeform/webby 55a2c03abbd32abf4775712c1959d975dc982549
+libcurl 1.0.0 https://github.com/Araq/libcurl eecbfc31e17ae2f09f0b6d2aaefcfb970c7d2be4

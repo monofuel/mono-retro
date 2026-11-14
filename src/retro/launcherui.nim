@@ -60,7 +60,7 @@ proc layout*(width, height: int, role: ScreenRole, rows = MenuLabels.len): MenuL
   result.body = UiRect(x: Margin, y: top + 44, width: max(1, width - Margin * 2),
     height: max(1, result.action.y - top - 60))
 
-proc label(ui: LauncherUi, image: Image, text: string, x, y: int,
+proc label*(ui: LauncherUi, image: Image, text: string, x, y: int,
     size = 22'f32, tint = TextColor) =
   ## Draw normal antialiased type without using the tester's diagnostic glyphs.
   ui.font.size = size
@@ -68,7 +68,7 @@ proc label(ui: LauncherUi, image: Image, text: string, x, y: int,
     float32(tint shr 8 and 255) / 255, float32(tint and 255) / 255, 1)
   image.fillText(ui.font.typeset(text), translate(vec2(x.float32, y.float32)))
 
-proc toolbar(ui: LauncherUi, image: Image, title: string, power: PowerStatus) =
+proc toolbar*(ui: LauncherUi, image: Image, title: string, power: PowerStatus) =
   ## Keep connection state and battery flow visible as separate toolbar lines.
   image.rect(0, 0, image.width, ToolbarHeight, PanelColor)
   ui.label(image, title, Margin, 20, 22)
