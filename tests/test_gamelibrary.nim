@@ -48,6 +48,8 @@ proc main() =
   doAssert "--save-dir:" & root / "mono-retro/saves/ds" / game.hash in arguments
   doAssert "--screenstate-dir:" & root / "mono-retro/screenshots" in arguments
   doAssert not dirExists(paths.gameSaveDir(game))
+  createDir(paths.gameSaveDir(game))
+  writeFile(paths.gameSaveDir(game) / "Game.srm", "cartridge progress")
   expectFailure(proc() = discard root.inside("../outside"))
   expectFailure(proc() = discard root.inside("Roms/../../outside"))
   createSymlink(temporary, root / "escape")
@@ -70,6 +72,8 @@ proc main() =
   doAssert index.games[0].hash == game.hash
   doAssert index.games[0].favourite
   doAssert index.games[0].path == "Roms/NDS/Renamed.nds"
+  doAssert readFile(paths.gameSaveDir(game) / "Renamed.srm") == "cartridge progress"
+  doAssert readFile(paths.gameSaveDir(game) / "Game.srm.before-rom-rename") == "cartridge progress"
   writeFile(rom.parentDir / "Renamed.nds", "changed game content")
   expectFailure(proc() = discard paths.gameArguments(config, game))
   index = paths.scanLibrary(config)

@@ -152,6 +152,22 @@ proc coreFor*(config: LibraryConfig, game: LibraryGame): string =
   for core in config.cores:
     if core.romHash.len == 0 and game.platform in core.platforms: return core.key
 
+proc preserveRenamedSave(paths: LibraryPaths, game: LibraryGame, path, core: string) =
+  ## Keep the player's stem-based cartridge save attached to a renamed ROM.
+  if game.path == path or game.core.len == 0 or game.core != core: return
+  let
+    base = "mono-retro/saves/" & game.core & "/" & game.hash
+    previous = paths.root.inside(base & "/" & game.path.splitFile.name & ".srm")
+    current = paths.root.inside(base & "/" & path.splitFile.name & ".srm")
+  if previous == current or not fileExists(previous): return
+  if fileExists(current):
+    if getFileInfo(previous).id == getFileInfo(current).id: return
+    if readFile(previous) != readFile(current):
+      raise newException(IOError, "Two different saves exist for a renamed ROM; resolve them before rescanning")
+  discard writeNewSave(previous & ".before-rom-rename", readFile(previous))
+  if fileExists(current): removeFile(previous)
+  else: moveFile(previous, current)
+
 proc scanLibrary*(paths: LibraryPaths, config: LibraryConfig): LibraryIndex =
   ## Discover local games while retaining identities, metadata and play history.
   paths.requireStorage(config)
@@ -183,10 +199,12 @@ proc scanLibrary*(paths: LibraryPaths, config: LibraryConfig): LibraryIndex =
         result.games.add game
     if hash in found: continue
     found.add hash
+    let core = config.coreFor(game)
+    paths.preserveRenamedSave(game, relative, core)
     game.path = relative
     game.size = info.size
     game.modified = info.lastWriteTime.toUnix
-    game.core = config.coreFor(game)
+    game.core = core
   result.games = result.games.filterIt(it.hash in found)
   result.games.sort(proc(a, b: LibraryGame): int = cmpIgnoreCase(a.title, b.title))
 

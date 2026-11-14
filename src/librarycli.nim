@@ -4,7 +4,7 @@ import
 
 const
   Help = """Usage: mono-retro-library COMMAND --library:DIR --config:FILE [options]
-Commands: scan, sync, sync-saves, pair, status, collections, select, favourite,
+Commands: scan, sync, sync-saves, pair, probe, status, collections, select, favourite,
           played, resolve, disconnect.
 Options: --game:SHA1 --id:N --choice:local|server --name:NAME --progress:FILE.
 Pair prints a browser URL and approval code, never an account password or token.
@@ -19,6 +19,11 @@ proc runLibraryCommand*(command, root, configPath, gameHash: string,
   if command == "disconnect":
     if fileExists(paths.credentials): removeFile(paths.credentials)
     return %*{"message": "Disconnected from RomM"}
+  if command == "probe":
+    let client = newRommClient(config.rommUrl)
+    defer: client.close()
+    let heartbeat = client.jsonRequest("GET", "/api/heartbeat")
+    return %*{"message": "RomM reachable", "version": heartbeat["SYSTEM"].stringField("VERSION")}
   if command == "pair":
     let client = newRommClient(config.rommUrl)
     defer: client.close()

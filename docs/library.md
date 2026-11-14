@@ -80,6 +80,8 @@ It requests ROM/platform/collection read permissions plus device and save
 permissions. Tokens are owner-only files; they do not belong on exFAT or in
 the portable library index. HTTPS verification stays enabled. Disconnect
 forgets the local token; revoke it in RomM to invalidate it server-side too.
+The Nix development shell uses the host CA bundle when available, including
+locally trusted internal CAs, and otherwise uses the public CA package.
 
 Choose **RomM collections**, then A/tap to toggle automatic downloads. Create
 ordinary collections in RomM's web UI if none exist. The launcher refreshes
@@ -107,6 +109,7 @@ and scan work off the display loop. Downloads stop before gameplay starts.
 ```sh
 mono-retro-library scan --library:/media/games --config:/etc/mono-retro/library.json
 mono-retro-library status --library:/media/games --config:/etc/mono-retro/library.json
+mono-retro-library probe --config:/etc/mono-retro/library.json
 mono-retro-library pair --library:/media/games --config:/etc/mono-retro/library.json
 mono-retro-library sync --library:/media/games --config:/etc/mono-retro/library.json
 ```

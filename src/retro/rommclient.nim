@@ -270,7 +270,7 @@ proc syncCatalogue*(client: RommClient, paths: LibraryPaths,
 
 proc savePath(paths: LibraryPaths, game: LibraryGame): string =
   ## Match the existing player's cartridge-save filename inside its private tree.
-  paths.gameSaveDir(game) / (game.path.splitFile.name & ".srm")
+  paths.root.inside(relativePath(paths.gameSaveDir(game), paths.root) & "/" & game.path.splitFile.name & ".srm")
 
 proc uploadSave(client: RommClient, game: LibraryGame, path: string, session: int) =
   ## Upload a bounded raw save using RomM's guarded autosave-version operation.
