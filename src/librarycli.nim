@@ -7,7 +7,7 @@ const
 Commands: scan, sync, sync-saves, pair, probe, status, collections, select, favourite,
           played, resolve, disconnect.
 Options: --game:SHA1 --id:N --choice:local|server --name:NAME --progress:FILE.
-Pair prints a browser URL and approval code, never an account password or token.
+Pair prints the complete browser approval link, never an account password or token.
 """
 
 proc runLibraryCommand*(command, root, configPath, gameHash: string,
@@ -35,7 +35,7 @@ proc runLibraryCommand*(command, root, configPath, gameHash: string,
       interval = max(1, flow.intField("interval", 5))
       expires = epochTime() + flow.intField("expires_in", 300).float64
       verification = client.pairingUrl(flow)
-    progress("Open " & verification & "\nCode: " & flow.stringField("user_code"))
+    progress(verification)
     while epochTime() < expires:
       sleep(interval * 1000)
       if client.pollPairing(flow.stringField("device_code"), paths.credentials):

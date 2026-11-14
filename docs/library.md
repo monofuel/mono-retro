@@ -70,7 +70,7 @@ State compatibility still depends on the ROM, core build and options.
 ## Connect to RomM
 
 Configure the server origin, then choose **Menu → Connect to RomM**. The menu
-shows a URL and short approval code. Open the URL in a browser, sign in and
+shows a complete approval link containing the pairing code. Open it in a browser, sign in and
 approve the device. The handheld polls at the server's requested interval and
 stores the returned device-bound token in `private/romm-credentials.json`
 beside its OS configuration. No account password is entered on the handheld.
