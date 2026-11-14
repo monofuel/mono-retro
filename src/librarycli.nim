@@ -34,10 +34,8 @@ proc runLibraryCommand*(command, root, configPath, gameHash: string,
       flow = client.beginPairing(identifier, name)
       interval = max(1, flow.intField("interval", 5))
       expires = epochTime() + flow.intField("expires_in", 300).float64
-      verification = flow.stringField("verification_path")
-    if not verification.startsWith("/") or verification.startsWith("//"):
-      raise newException(ValueError, "Invalid RomM approval URL")
-    progress("Open " & config.rommUrl & verification & "\nCode: " & flow.stringField("user_code"))
+      verification = client.pairingUrl(flow)
+    progress("Open " & verification & "\nCode: " & flow.stringField("user_code"))
     while epochTime() < expires:
       sleep(interval * 1000)
       if client.pollPairing(flow.stringField("device_code"), paths.credentials):

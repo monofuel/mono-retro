@@ -40,7 +40,8 @@ proc serve(root: string) =
     elif path == "/api/auth/device/init":
       doAssert not body.contains("password")
       response = $(%*{"device_code": "private-fixture-code", "user_code": "TESTCODE",
-        "verification_path": "/pair/device", "interval": 1, "expires_in": 10})
+        "verification_path": "/pair/device", "verification_path_complete": "/pair/device?user_code=TESTCODE",
+        "interval": 1, "expires_in": 10})
     elif path == "/api/auth/device/token":
       let mode = readFile(root / "pair-mode")
       if mode == "approved":
@@ -121,6 +122,9 @@ proc main() =
   paths.prepareStorage(config)
   let flow = client.beginPairing("fixture", "Fixture device")
   doAssert flow.stringField("user_code") == "TESTCODE"
+  doAssert client.pairingUrl(flow) == origin & "/pair/device?user_code=TESTCODE"
+  for path in ["", "https://different.example/pair/device", "//different.example/pair", "/\\different.example"]:
+    rejected(proc() = discard client.pairingUrl(%*{"verification_path_complete": path}))
   doAssert not client.pollPairing("private-fixture-code", paths.credentials)
   doAssert not fileExists(paths.credentials)
   writeFile(root / "pair-mode", "access_denied")

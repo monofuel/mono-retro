@@ -118,6 +118,13 @@ proc beginPairing*(client: RommClient, identifier, name: string): JsonNode =
     "client": "mono-retro", "platform": "linux", "client_version": "0.1.0",
     "requested_scopes": RequestedScopes}))
 
+proc pairingUrl*(client: RommClient, flow: JsonNode): string =
+  ## Include the public approval code while keeping the configured server origin.
+  let path = flow.stringField("verification_path_complete")
+  if not path.startsWith("/") or path.startsWith("//") or '\\' in path:
+    raise newException(ValueError, "Invalid RomM approval URL")
+  client.credentials.origin & path
+
 proc pollPairing*(client: RommClient, code, credentialPath: string): bool =
   ## Return pending approval, or privately publish the approved device token.
   let response = client.request("POST", "/api/auth/device/token", $(%*{"device_code": code}))
