@@ -76,7 +76,10 @@ proc serve(root: string) =
     elif path.startsWith("/api/saves?") and verb == "POST":
       doAssert path.contains("overwrite=false")
       doAssert body.contains("name=\"saveFile\"")
-      writeFile(root / "uploaded", body)
+      if fileExists(root / "reject-upload") and not fileExists(root / "acknowledged"):
+        status = "409 Conflict"
+      else:
+        writeFile(root / "uploaded", body)
     elif path == "/api/sync/sessions/42/complete":
       writeFile(root / "completed", body)
     elif path == "/truncated":
@@ -156,6 +159,19 @@ proc main() =
   let save = paths.gameSaveDir(game) / "Fixture.srm"
   createDir(save.parentDir)
   writeSave(save, "original local save")
+  writeFile(root / "save-mode", "upload")
+  writeFile(root / "reject-upload", "yes")
+  rejected(proc() = connected.syncSaves(paths, config, index, progress))
+  doAssert game.saveConflict and paths.loadIndex().games[0].saveConflict
+  doAssert readFile(save) == "original local save"
+  connected.resolveSave(paths, config, index, game.hash, "local")
+  doAssert not game.saveConflict
+  doAssert readFile(save) == "original local save"
+  doAssert readFile(save & ".server-before-resolution") == RemoteSave
+  doAssert fileExists(root / "uploaded")
+  removeFile(root / "uploaded")
+  removeFile(root / "acknowledged")
+  removeFile(root / "reject-upload")
   writeFile(root / "save-mode", "conflict")
   rejected(proc() = connected.syncSaves(paths, config, index, progress))
   doAssert readFile(save) == "original local save"

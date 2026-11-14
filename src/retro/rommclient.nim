@@ -295,6 +295,10 @@ proc uploadSave(client: RommClient, game: LibraryGame, path: string, session: in
   fields.add ("Content-Type", "multipart/form-data; boundary=" & boundary)
   let response = client.curl.makeRequest("POST", client.credentials.origin & path,
     fields, body, timeout = RequestTimeout)
+  if response.code == 409:
+    game.saveConflict = true
+    raise newException(IOError, "RomM has another save for " & game.title &
+      "; choose which save to keep before playing. Local progress is preserved")
   if response.code notin 200 .. 299:
     raise newException(IOError, "Save upload was not accepted; local progress is preserved (HTTP " & $response.code & ")")
 
@@ -408,7 +412,8 @@ proc resolveSave*(client: RommClient, paths: LibraryPaths, config: LibraryConfig
   for operation in response["operations"]:
     if operation.intField("rom_id") != game.rommId or operation.stringField("slot") != "autosave": continue
     let action = operation.stringField("action")
-    if action in ["conflict", "download"]:
+    if action in ["conflict", "download"] or
+        (action == "upload" and operation.intField("save_id") > 0):
       let serverContent = client.receiveSave(paths, game, operation, session)
       discard writeNewSave(path & ".server-before-resolution", serverContent)
       if choice == "server":
