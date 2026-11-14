@@ -21,6 +21,7 @@ type
     options: seq[CoreOption]
     captureAudio, achievementsEnabled, withList, withState: bool
     microphoneEnabled: bool
+    microphoneGainDb: int
     microphoneFactory: MicrophoneFactory
     buttons: uint16
     slot: int
@@ -138,7 +139,8 @@ proc emulate(mailbox: ptr Mailbox) {.thread.} =
           raise newException(IOError, "State file exceeds supported size")
         initialState = unwrapScreenstate(readFile(config.state), romHash, coreHash)
       let microphoneEnabled = config.microphoneEnabled and not replaying
-      if microphoneEnabled: microphone = newPlayerMicrophone(config.microphoneFactory)
+      if microphoneEnabled:
+        microphone = newPlayerMicrophone(config.microphoneFactory, config.microphoneGainDb)
       let defaults: seq[CoreOption] = @[
         ("melonds_mic_input", if microphoneEnabled: "microphone" else: "silence"),
         ("melonds_mic_input_active", "always")]
@@ -309,7 +311,7 @@ proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = fa
     options: seq[CoreOption] = @[], statePath = "", raConfigPath = "",
     achievementsEnabled = false, captureDirectory = "", replayPath = "",
     screenstateDirectory = "", microphoneEnabled = false,
-    microphoneFactory: MicrophoneFactory = nil): CoreWorker =
+    microphoneFactory: MicrophoneFactory = nil, microphoneGainDb = 0): CoreWorker =
   ## Load a software core on its dedicated thread with one bounded frame in flight.
   ## Microphone factories execute on that thread and must not capture caller-owned state.
   result = CoreWorker(mailbox: cast[ptr Mailbox](allocShared0(sizeof(Mailbox))))
@@ -321,7 +323,7 @@ proc openCoreWorker*(corePath, romPath, saveDirectory: string, captureAudio = fa
     raConfigPath: owned(raConfigPath), achievementsEnabled: achievementsEnabled,
     captureRoot: owned(captureDirectory), replayPath: owned(replayPath),
     screenstateDirectory: owned(screenstateDirectory), microphoneEnabled: microphoneEnabled,
-    microphoneFactory: microphoneFactory)
+    microphoneFactory: microphoneFactory, microphoneGainDb: microphoneGainDb)
   when defined(raTesting):
     config.raHttpTestHandler = workerRaHttpTestHandler
   for option in options: config.options.add((owned(option.key), owned(option.value)))

@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+if grep -q 'anbernic,rg-ds-plus' /proc/device-tree/compatible; then
+  exec amixer -q -c rk817hp sset 'Mic Capture Gain' 27dB
+fi

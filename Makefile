@@ -22,6 +22,7 @@ check:
 	nim check tests/test_playercore.nim
 	nim check tests/test_playeraudio.nim
 	nim check tests/test_playermicrophone.nim
+	nim check tests/test_hardwareaudio.nim
 	nim check tests/test_playerds.nim
 	nim check tests/test_playerstate.nim
 	nim check tests/test_playerworker.nim
@@ -45,7 +46,9 @@ test:
 	nim r -o:build/test-playerslots tests/test_playerslots.nim
 	nim r -o:build/test-pausemenu tests/test_pausemenu.nim
 test-audio:
+	mkdir -p build
 	nim r tests/test_audio_stream.nim
+	ALSOFT_DRIVERS=null nim r -o:build/test-hardwareaudio tests/test_hardwareaudio.nim
 build:
 	mkdir -p build
 	nim c -o:build/hwtest src/hwtest.nim

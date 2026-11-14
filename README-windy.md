@@ -49,7 +49,7 @@ tester's X11 build uses the new CPU pixel path.
 
 Paddy handles gamepads; raw evdev input remains available for comparison,
 calibration, volume and Back. Windy supplies the displayed touch contacts and
-trails. ALSA playback is unchanged: Start requests a tone; holding Select+Start
+trails. Slappy provides live output/microphone meters: Start requests a tone; holding Select+Start
 for two seconds exits. On desktop, Escape or the window close button exits.
 Desktop testing does not require a raw input device or root access, although
 optional gamepads may require input-device permissions.

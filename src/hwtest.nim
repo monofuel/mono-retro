@@ -1,7 +1,7 @@
 import
   std/[json, monotimes, os, posix, strformat, times],
-  paddy,
-  retro/[audio, display, gamepad, input, pattern, settings, touch]
+  paddy, windy,
+  retro/[audio, display, gamepad, hardwareaudio, input, pattern, settings, touch]
 
 const
   Help = """Usage: hwtest [test|info|input|audio|calibrate] [options]
@@ -14,14 +14,17 @@ const
   --touch-rotate:N  Touch rotation: 0, 90, 180, 270
   --fb:PATH         Framebuffer (default /dev/fb0)
   --input:PATH      Input device; repeat for multiple devices
-  --pcm:NAME        ALSA PCM (default default)
+  --pcm:NAME        ALSA PCM for the audio command (default default)
+  --mute            Disable test-tone playback
+  --microphone:on|off  Live mic meter (default on)
   --rotate:DEGREES  0, 90, 180, 270
   --seconds:N       Test duration, 1-3600 (default 300)
   --tone-key:N      Fresh key press that plays sound (default 315 / Start)
   --save-profile:PATH  Calibration output profile
   --preview:PATH    Render a PPM preview without accessing hardware
 
-Test mode never plays sound automatically. Start plays a short left/right tone.
+Test mode never plays sound automatically. Start or desktop Enter plays a short left/right tone.
+Speaker output and microphone input bars show live peak levels through Slappy.
 Hold Select+Start for two seconds to exit, or use Ctrl+C. Input is observed without an exclusive grab.
 Display cleanup runs on normal exit, SIGINT and SIGTERM.
 """
@@ -31,14 +34,31 @@ var stopping = false
 proc stopHandler(signal: cint) {.noconv.} =
   stopping = true
 
+proc drawMeter(canvas: Canvas, label, status: string, peak: float,
+    x, y, width, scale: int) =
+  ## Draw one peak meter on a -60 to 0 dBFS scale with its current device status.
+  let
+    textHeight = 9 * scale
+    level = if peak > 0: &"{peak.decibels():.1f} DBFS" else: "SILENT"
+    caption = if status.len > 0: status else: level
+    barHeight = max(4, textHeight - 5)
+  canvas.text(x, y, label, White, scale)
+  canvas.text(x + max(0, width - caption.len * 6 * scale), y, caption, Cyan, scale)
+  canvas.rect(x, y + textHeight, width, barHeight, Gray)
+  canvas.rect(x, y + textHeight, int(width.float * peak.meterFraction()), barHeight,
+    if peak >= 0.99: 0xff6040'u32 else: Green)
+
 proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, tones: int,
-    monitor = GamepadMonitor()): Canvas =
+    monitor = GamepadMonitor(), levels: HardwareAudio = nil): Canvas =
   result = testPattern(width, height, tick)
   let
     margin = max(8, width div 60)
     scale = max(1, min(width div 300, height div 200))
     textHeight = 9 * scale
     top = max(20, height div 5) + margin
+    footer = height - 28 - textHeight * 3
+    sideMeters = settings.sticks.len == 1 and width >= 600
+    meterReserve = if sideMeters: 0 else: textHeight * 4 + margin
     title = "MONO RETRO - " & settings.title & " - " & settings.gamepad
   result.text(margin, top, title, White, scale)
   result.text(margin, top + textHeight, "PRESS ALL BUTTONS - GREEN MEANS SEEN", Cyan, scale)
@@ -49,7 +69,10 @@ proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, to
     columns = max(2, width div (10 * 6 * scale))
     cellWidth = (width - margin * 2) div columns
     cellHeight = textHeight + 6
-    rows = max(1, (height - top - textHeight * 5 - 28) div cellHeight)
+    rows = max(1, (footer - meterReserve - top - textHeight * 2 - margin) div cellHeight)
+  var
+    meterTop = footer - textHeight * 4 - margin
+    meterLeft = margin
   var badges: seq[tuple[label: string, active, seen: bool]]
   if settings.bindings.len > 0:
     for binding in settings.bindings:
@@ -76,8 +99,11 @@ proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, to
     inc index
   if settings.sticks.len > 0:
     let
-      stickTop = top + textHeight * 2 + ((badges.len + columns - 1) div columns) * cellHeight + margin
-      size = min(150, max(40, (height - stickTop - textHeight * 7 - 30)))
+      stickTop = top + textHeight * 2 + min(rows, (badges.len + columns - 1) div columns) * cellHeight + margin
+      size = min(150, max(20, footer - meterReserve - stickTop - textHeight * 4 - margin))
+    if sideMeters:
+      meterTop = stickTop + textHeight
+      meterLeft = width div 2
     for stickIndex, stick in settings.sticks:
       let
         left = margin + stickIndex * (width - margin * 2) div settings.sticks.len
@@ -108,10 +134,22 @@ proc draw(settings: Settings, devices: seq[InputDevice], width, height, tick, to
         result.text(left + size + 12, stickTop + textHeight, "WHITE: MAPPED", White, max(1, scale - 1))
         result.text(left + size + 12, stickTop + textHeight * 2, "CYAN: RAW", Cyan, max(1, scale - 1))
   let
-    footer = height - 28 - textHeight * 3
     summary = &"SEEN {seen}/{index} - TONES {tones}" &
       (if settings.gamepad == "paddy": " - PADS " & $monitor.pads.len else: "")
-    instructions = if index > columns * rows: "MORE CONTROLS IN SSH LOG" else: "START: TONE - HOLD SELECT+START 2S: EXIT"
+    instructions = if index > columns * rows: "MORE CONTROLS IN SSH LOG"
+      elif settings.displayBackend() == "x11": "START/ENTER: TONE - SELECT+START 2S: EXIT"
+      else: "START: TONE - HOLD SELECT+START 2S: EXIT"
+    outputStatus = if settings.muted: "MUTED"
+      elif levels != nil and levels.outputError.len > 0: "UNAVAILABLE"
+      else: ""
+    micStatus = if not settings.microphoneEnabled: "OFF"
+      elif levels != nil and levels.microphoneError.len > 0: "UNAVAILABLE"
+      else: ""
+  result.drawMeter("SPEAKER OUTPUT", outputStatus,
+    if levels == nil: 0.0 else: levels.outputPeak, meterLeft, meterTop, width - meterLeft - margin, scale)
+  result.drawMeter("MIC INPUT", micStatus,
+    if levels == nil: 0.0 else: levels.microphonePeak,
+    meterLeft, meterTop + textHeight * 2, width - meterLeft - margin, scale)
   result.text(margin, footer, summary, Green, scale)
   result.text(margin, footer + textHeight, instructions, White, scale)
   result.text(margin, footer + textHeight * 2, "TOP: COLORS - BOTTOM: GRAY - MOVING MARKER", White, scale)
@@ -260,7 +298,8 @@ proc calibrate(settings: var Settings, devices: seq[InputDevice], fb: Display) =
     "display": settings.display, "drmDevice": settings.drmDevice,
     "outputs": settings.outputs, "touchName": settings.touchName,
     "touchRotation": settings.touchRotation, "sticks": newJArray(),
-    "audioDevice": settings.audioDevice, "inputNames": settings.inputNames,
+    "audioDevice": settings.audioDevice, "microphoneGainDb": settings.microphoneGainDb,
+    "inputNames": settings.inputNames,
     "rotation": settings.rotation, "toneKey": settings.toneKey,
     "bindings": newJArray()
   }
@@ -297,9 +336,10 @@ proc main() =
     return
   posix.signal(SIGINT, stopHandler)
   posix.signal(SIGTERM, stopHandler)
-  let audio = AudioTest(device: settings.audioDevice)
-  defer: audio.close()
   if settings.command == "audio":
+    if settings.muted: return
+    let audio = AudioTest(device: settings.audioDevice)
+    defer: audio.close()
     audio.play()
     while audio.completed == 0 and not stopping:
       audio.poll()
@@ -349,6 +389,13 @@ proc main() =
     if stopping:
       return
     settings.command = "test"
+  if settings.audioDevice != "default" and getEnv("ALSOFT_CONF").len == 0 and
+      fileExists("/etc/mono-retro/alsoft.conf"):
+    putEnv("ALSOFT_CONF", "/etc/mono-retro/alsoft.conf")
+  let audio = if settings.command == "test":
+    newHardwareAudio(settings.muted, settings.microphoneEnabled,
+      gainDb = settings.microphoneGainDb) else: nil
+  defer: audio.close()
   let started = getMonoTime()
   var
     monitor: GamepadMonitor
@@ -364,6 +411,9 @@ proc main() =
     if settings.gamepad == "paddy": closeGamepads()
   while not stopping and (getMonoTime() - started).inSeconds < settings.seconds:
     if fb != nil and not fb.poll(): break
+    if settings.command == "test" and fb != nil and fb.window().buttonPressed[KeyEnter]:
+      audio.play()
+      inc toneCount
     if settings.gamepad == "paddy": monitor.poll()
     for device in devices:
       for event in device.readEvents():
@@ -391,10 +441,11 @@ proc main() =
         break
     else:
       comboHeld = false
-    audio.poll()
     if fb != nil and (getMonoTime() - lastDraw).inMilliseconds >= 80:
       lastDraw = getMonoTime()
-      fb.present(draw(settings, devices, fb.width, fb.height, tick, audio.completed, monitor))
+      audio.poll()
+      fb.present(draw(settings, devices, fb.width, fb.height, tick,
+        if audio == nil: 0 else: audio.completed, monitor, audio))
       if fb.count() > 1:
         let state = fb.touch
         trace.observe(state, fb.width(1), fb.height(1), 0)
@@ -402,7 +453,7 @@ proc main() =
         fb.present(drawTouch(settings, state, trace, fb.width(1), fb.height(1), tick), 1)
       inc tick
     sleep(8)
-  echo "Completed tone playbacks: ", audio.completed, "; requests: ", toneCount
+  echo "Completed tone playbacks: ", (if audio == nil: 0 else: audio.completed), "; requests: ", toneCount
   for device in devices:
     for control in device.controls:
       if control.seen:

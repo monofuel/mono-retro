@@ -163,7 +163,8 @@ proc main() =
     raConfigPath = raConfigPath, achievementsEnabled = achievementsEnabled,
     captureDirectory = (if capturesEnabled: captureDirectory else: ""), replayPath = replayPath,
     screenstateDirectory = screenstateDirectory,
-    microphoneEnabled = microphoneEnabled and not noInput and replayPath.len == 0)
+    microphoneEnabled = microphoneEnabled and not noInput and replayPath.len == 0,
+    microphoneGainDb = settings.microphoneGainDb)
   defer: session.close()
   if dual.layout != NoDsLayout:
     validateDualGeometry(session.av.geometry.baseWidth.int, session.av.geometry.baseHeight.int, dual.geometry)

@@ -7,6 +7,7 @@ let
     curl
     systemd
     libevdev
+    alsa-lib
     openal
     openssl
     xorg.libX11

@@ -288,9 +288,8 @@ needed to route focus and mouse input independently between the two windows.
 The tested cartridge boots with the core's built-in FreeBIOS and firmware.
 The core's touch cursor is hidden. Set the compile-time `ShowDsTouchCursor`
 constant in `src/retro/playerds.nim` to `true` to show it for diagnostics.
-Audio output uses Slappy as usual. Microphone input is disabled for this MVP;
-Lost in Blue interactions requiring blowing remain unavailable. Switching
-layouts during play is deferred.
+Audio output and microphone capture use Slappy. See [microphone input](#microphone)
+for capture rates and device gain settings. Switching layouts during play is deferred.
 
 ## Handhelds
 
@@ -417,8 +416,18 @@ microphone continuously during gameplay, without holding L2. This also applies
 without `--ds-layout`. Use `--microphone:off` to disable capture; combine it with
 `--mute` to open neither playback nor capture devices.
 
-Capture uses Slappy's OpenAL microphone API with signed 16-bit mono PCM at the
-rate requested by the core (44.1 kHz for melonDS DS). Hardware opens only when a
+Device profiles can set `microphoneGainDb` from 0 to 30 for software input boost.
+The RG DS Plus ROCKNIX profile uses +12 dB to bring its quiet capture above
+Lost in Blue's blowing threshold. Boosting saturates at signed 16-bit limits;
+desktop and other profiles default to no boost. The hardware tester's mic meter
+includes the same boost.
+
+Capture uses Slappy's OpenAL microphone API with signed 16-bit mono PCM at
+44.1 kHz or 48 kHz, reporting that actual rate to the core. Requests above 44.1 kHz
+use 48 kHz; newer melonDS DS cores resample it to their emulated microphone rate.
+Standard-rate capture avoids the RG DS
+Plus's failure to recover after an unread-buffer overrun at 47,605 Hz.
+Hardware opens only when a
 core requests a microphone. Missing devices or capture failures fall back to
 silence. Capture stops during focus pauses and pause menus; resuming or loading
 a screenstate discards old microphone audio. Fast-forward never waits for input.

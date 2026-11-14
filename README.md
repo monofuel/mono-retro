@@ -18,7 +18,8 @@ RG DS Plus layout previews, with both screens stacked in each image.
   information, reboot or shut down.
 - **Player:** run libretro cores with integer scaling, audio, controller input,
   save files and state imports.
-- **Hardware tester:** check displays, buttons, sticks, multitouch and sound;
+- **Hardware tester:** check displays, buttons, sticks, multitouch and sound,
+  with live Slappy speaker-output and microphone-input meters;
   inspect raw input and calibrate device profiles.
 
 Tested cores include mGBA, [melonDS DS](https://github.com/JesseTG/melonds-ds) and
@@ -81,7 +82,7 @@ nimby sync nimby.lock
 ```
 
 Desktop builds need libudev, libevdev, libX11, libXcursor, OpenGL/GLX, OpenAL Soft, libcurl and
-OpenSSL. The tester also uses ALSA for its tone. On NixOS, enter
+OpenSSL. The tester's separate `audio` command also uses ALSA. On NixOS, enter
 `nix-shell shell-player.nix` before building.
 
 ```sh

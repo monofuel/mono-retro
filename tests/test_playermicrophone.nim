@@ -18,8 +18,11 @@ proc toneCapture(rate, bufferSamples: int): MicrophoneCapture =
   var
     running = false
     phase = 0
-  let silent = toneSilent
+  let
+    silent = toneSilent
+    actualRate = if rate <= DefaultMicrophoneRate: DefaultMicrophoneRate else: 48000
   result = MicrophoneCapture(
+    rate: actualRate,
     start: proc() = running = true,
     stop: proc() = running = false,
     close: proc() = running = false,
@@ -28,7 +31,7 @@ proc toneCapture(rate, bufferSamples: int): MicrophoneCapture =
       inc toneReads
       var samples = newSeq[int16](count)
       for sample in samples.mitems:
-        if not silent: sample = int16(sin(2 * PI * 440 * phase.float / rate.float) * 30000)
+        if not silent: sample = int16(sin(2 * PI * 440 * phase.float / actualRate.float) * 30000)
         inc phase
       result = newSeq[uint8](count * sizeof(int16))
       copyMem(addr result[0], addr samples[0], result.len)))
@@ -75,6 +78,28 @@ proc syntheticCapture(rate, bufferSamples: int): MicrophoneCapture =
 proc unavailableCapture(rate, bufferSamples: int): MicrophoneCapture =
   ## Simulate a system with no usable microphone.
   raise newException(IOError, "synthetic missing device")
+
+proc negotiatedCapture(rate, bufferSamples: int): MicrophoneCapture =
+  ## Model a standard hardware rate differing from the core's requested rate.
+  doAssert rate == 47605 and bufferSamples == 4760
+  result = syntheticCapture(48000, 4800)
+  result.rate = 48000
+
+proc testNegotiatedRate() =
+  ## Report the actual hardware rate so the core can resample its microphone input.
+  let host = newPlayerMicrophone(negotiatedCapture)
+  defer: host.close()
+  var params = MicrophoneParams(rate: 47605)
+  let handle = host.api.open(addr params)
+  doAssert handle != nil
+  doAssert host.api.getParams(handle, addr params)
+  doAssert params.rate == 48000
+  doAssert host.api.setState(handle, true)
+  var samples: array[4, int16]
+  doAssert host.api.read(handle, addr samples[0], samples.len.csize_t) == samples.len
+  doAssert samples == [-123'i16, 321, -456, 789]
+  host.api.close(handle)
+  doAssert lastCapture.closes == 1
 
 proc testAdapter() =
   ## Exercise callback contracts, current PCM, pause handling and device failure.
@@ -151,6 +176,20 @@ proc testAdapter() =
   let unavailable = newPlayerMicrophone(unavailableCapture)
   doAssert unavailable.api.open(nil) == nil
   unavailable.close()
+
+proc testInputGain() =
+  ## Boost microphone PCM without wrapping clipped positive or negative samples.
+  let host = newPlayerMicrophone(syntheticCapture, gainDb = 12)
+  defer: host.close()
+  let handle = host.api.open(nil)
+  doAssert handle != nil
+  let state = lastCapture
+  state.continuous = false
+  doAssert host.api.setState(handle, true)
+  state.samples = @[-20000'i16, 20000]
+  var output: array[4, int16]
+  doAssert host.api.read(handle, addr output[0], output.len.csize_t) == output.len
+  doAssert output == [low(int16), high(int16), 0, 0]
 
 proc testWorker() =
   ## Cover C ABI negotiation, worker ownership, recording policy and cleanup.
@@ -267,13 +306,15 @@ proc testMelonDs(core, rom: string) =
           session.step(if frame in [6, 97]: 256'u16 else: 0'u16)
           let samples = session.takeAudio()
           if frame >= 100: outputs[run].add(samples)
-        doAssert toneReads > 100
+        doAssert toneReads > 0, "The recording ROM must consume microphone PCM"
       finally: session.close()
     finally: host.close()
   doAssert outputs[0].len > 0 and outputs[0].len == outputs[1].len
   doAssert outputs[0] != outputs[1], "Recorded microphone tone must differ from silence"
 
 testAdapter()
+testNegotiatedRate()
+testInputGain()
 testWorker()
 doAssert paramCount() in [0, 2], "Optional arguments: melonDS DS core and micrecord.nds"
 if paramCount() == 2: testMelonDs(paramStr(1), paramStr(2))

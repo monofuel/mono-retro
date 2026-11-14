@@ -14,12 +14,14 @@ type
     batteryCurrentSupply*: string
     volumeCard*: string
     volumeInverted*: bool
+    muted*, microphoneEnabled*: bool
     outputs*: seq[string]
     volumeControls*: seq[string]
     sticks*: seq[StickBinding]
     inputNames*, inputDevices*: seq[string]
     bindings*: seq[Binding]
     rotation*, touchRotation*, seconds*, toneKey*, audioPrebufferMs*: int
+    microphoneGainDb*: int
 
 const
   DefaultAudioPrebufferMs = 30
@@ -63,7 +65,8 @@ proc defaultSettings*(): Settings =
   ## Return defaults for an unprofiled device.
   Settings(title: "LINUX HANDHELD", framebuffer: "/dev/fb0", audioDevice: "default",
     display: "auto", drmDevice: "/dev/dri/card0", gamepad: "paddy",
-    command: "test", seconds: 300, toneKey: 315, audioPrebufferMs: DefaultAudioPrebufferMs)
+    command: "test", seconds: 300, toneKey: 315, audioPrebufferMs: DefaultAudioPrebufferMs,
+    microphoneEnabled: true)
 
 proc applyProfile*(settings: var Settings, profile: JsonNode) =
   ## Apply explicit JSON settings while retaining unspecified defaults.
@@ -92,6 +95,7 @@ proc applyProfile*(settings: var Settings, profile: JsonNode) =
           device: stick["device"].getStr(), x: uint16(x), y: uint16(y))
     of "audioDevice": settings.audioDevice = value.getStr()
     of "audioPrebufferMs": settings.audioPrebufferMs = value.getInt()
+    of "microphoneGainDb": settings.microphoneGainDb = value.getInt()
     of "volumeCard": settings.volumeCard = value.getStr()
     of "volumeControls":
       settings.volumeControls = @[]
@@ -119,6 +123,8 @@ proc applyProfile*(settings: var Settings, profile: JsonNode) =
 
 proc validate*(settings: Settings) =
   ## Validate device settings before opening hardware.
+  if settings.microphoneGainDb notin 0..30:
+    raise newException(ValueError, "Microphone gain must be between 0 and 30 dB")
   if settings.audioPrebufferMs notin 1..MaxAudioPrebufferMs:
     raise newException(ValueError, "Audio prebuffer must be between 1 and " & $MaxAudioPrebufferMs & " ms")
   if settings.gamepad notin ["paddy", "raw"]:
@@ -194,6 +200,12 @@ proc parseSettings*(arguments: seq[string], detected = genericDevice): Settings 
       of "touch-rotate": result.touchRotation = parseInt(value)
       of "input": result.inputDevices.add value
       of "pcm": result.audioDevice = value
+      of "mute": result.muted = true
+      of "microphone":
+        case value
+        of "on": result.microphoneEnabled = true
+        of "off": result.microphoneEnabled = false
+        else: raise newException(ValueError, "Expected --microphone:on|off")
       of "rotate": result.rotation = parseInt(value)
       of "seconds": result.seconds = parseInt(value)
       of "tone-key": result.toneKey = parseInt(value)

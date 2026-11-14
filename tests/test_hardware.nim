@@ -91,6 +91,12 @@ block:
   let parsed = parseSettings(@["input", "--input:/dev/input/event7", "--seconds:5"])
   doAssert parsed.command == "input" and parsed.inputDevices == @["/dev/input/event7"]
   doAssert parsed.seconds == 5
+  let silent = parseSettings(@["--mute", "--microphone:off"])
+  doAssert silent.muted and not silent.microphoneEnabled
+  doAssert defaultSettings().microphoneEnabled
+  let boosted = parseSettings(@[], rgDsPlusRocknixDevice)
+  doAssert boosted.microphoneGainDb == 12
+  doAssert parseSettings(@[], genericDevice).microphoneGainDb == 0
   var rejected = false
   try:
     discard parseSettings(@["--rotate:45"])

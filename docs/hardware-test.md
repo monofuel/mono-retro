@@ -9,9 +9,11 @@ build/hwtest-desktop --device:rg-sp --preview:build/sp-preview.ppm
 build/hwtest-desktop --device:rg-ds-plus --preview:build/ds-preview.ppm
 ```
 
-The DS preview also writes `ds-preview-touch.ppm`. ALSA tone playback requires
-`libasound.so.2`, loaded when requested. DRM displays require `libdrm.so.2`.
-`make test-audio` checks streaming using ALSA's silent null/file plugins.
+The DS preview also writes `ds-preview-touch.ppm`. The live audio meters use
+Slappy/OpenAL Soft. The separate ALSA `audio` command requires `libasound.so.2`,
+loaded when requested. DRM displays require `libdrm.so.2`. `make test-audio`
+checks ALSA's silent null/file plugins and Slappy's null output with synthetic
+microphone input.
 
 ## Device selection
 
@@ -85,11 +87,31 @@ it is a functional hardware test, not a vblank-paced latency benchmark.
 
 Sound plays only on a fresh Start press in test mode. Holding Start does not
 repeat it. The quiet, faded test is 440 Hz on the left, then 660 Hz on the right.
-A mono speaker mixes those channels. After the first press, a worker keeps the
-PCM open and writes silence between tones, avoiding repeated codec power
-transitions. Hold Select+Start for two seconds to exit, or interrupt via SSH
+A mono speaker mixes those channels. Playback uses Slappy/OpenAL and retains
+its output device after the first tone. Hold Select+Start for two seconds to exit, or interrupt via SSH
 with Ctrl+C. Tests also stop after the selected duration. The explicit `audio`
-command plays one tone immediately for manual diagnostics.
+command plays one tone immediately through ALSA for comparison; `--pcm:NAME`
+selects its PCM.
+
+Test mode shows two peak meters on a -60 to 0 dBFS scale. **Speaker output**
+follows the current test-tone PCM playback position; it measures the digital
+signal, not physical speaker loudness. **Mic input** continuously measures the
+default microphone through the same Slappy capture adapter used by the player
+(16-bit mono, 44.1 kHz). Microphone audio is neither saved nor played back.
+The mic meter includes the profile's `microphoneGainDb` software boost, matching
+the signal sent to games. The RG DS Plus ROCKNIX profile uses +12 dB.
+Its RK817 hardware mic gain is set to +27 dB. Install
+`tools/rg_ds_plus_microphone.start` as executable
+`/etc/local.d/mono-retro-microphone.start` to retain that setting at boot through
+OpenRC's `local` service. It only applies to the matching device-tree identity.
+Unavailable devices are identified on their meter, with details on stderr.
+
+`--mute` disables tone playback independently of the microphone. Combine it
+with `--microphone:off` for automated runs that open neither audio device.
+Previews, `info`, `input` and calibration do not open a microphone; finishing
+calibration enters test mode. The graphical tester follows OpenAL Soft's normal
+device configuration, using `/etc/mono-retro/alsoft.conf` on configured handhelds
+unless `ALSOFT_CONF` is explicitly set.
 
 With the stock kernels, monorig installs named ALSA PCMs which temporarily
 enable speaker routing and restore mixer controls when playback closes,

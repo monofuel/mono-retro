@@ -1,10 +1,12 @@
 import
+  std/math,
   slappy,
   ./microphone
 
 type
   MicrophoneCapture* = ref object
     ## Capture operations run only on the core thread; factories may inject test input.
+    rate*: int ## Actual capture rate; zero retains the factory's requested rate.
     start*, stop*, close*: proc() {.closure.}
     available*: proc(): int {.closure.}
     read*: proc(count: int): seq[uint8] {.closure.}
@@ -18,20 +20,44 @@ type
     factory: MicrophoneFactory
     handles: seq[CapturedMicrophone]
     suspended: bool
+    gain: float
 
 const
   DefaultMicrophoneRate* = 44100
+  HighMicrophoneRate = 48000
   MicrophoneBufferMs* = 100
   MaxMicrophoneRate = 192000
   MillisecondsPerSecond = 1000
 
 var activeHost {.threadvar.}: PlayerMicrophone
 
-proc slappyCapture(rate, bufferSamples: int): MicrophoneCapture =
-  ## Open capture without creating or touching Slappy's playback context.
-  let mic = newMicrophone(frequency = rate, channels = 1, bits = 16,
-    bufferSize = bufferSamples)
+proc microphoneGainFactor*(gainDb: int): float =
+  ## Convert a validated software input boost into a linear multiplier.
+  if gainDb notin 0..30:
+    raise newException(ValueError, "Microphone gain must be between 0 and 30 dB")
+  pow(10.0, gainDb.float / 20.0)
+
+proc applyMicrophoneGain*(data: var seq[uint8], gain: float) =
+  ## Boost native signed 16-bit PCM with saturation rather than integer wraparound.
+  if gain == 1 or data.len == 0: return
+  if data.len mod sizeof(int16) != 0:
+    raise newException(IOError, "Incomplete microphone PCM")
+  let samples = cast[ptr UncheckedArray[int16]](addr data[0])
+  for index in 0..<data.len div sizeof(int16):
+    samples[index] = int16(clamp(round(samples[index].float * gain).int,
+      low(int16).int, high(int16).int))
+
+proc slappyCapture*(rate, bufferSamples: int): MicrophoneCapture =
+  ## Open standard-rate capture independently of playback and report its actual rate.
+  if rate <= 0 or bufferSamples <= 0:
+    raise newException(ValueError, "Microphone rate and buffer size must be positive")
+  let
+    captureRate = if rate <= DefaultMicrophoneRate: DefaultMicrophoneRate else: HighMicrophoneRate
+    captureSamples = max(1, (bufferSamples * captureRate + rate - 1) div rate)
+    mic = newMicrophone(frequency = captureRate, channels = 1, bits = 16,
+      bufferSize = captureSamples)
   result = MicrophoneCapture(
+    rate: captureRate,
     start: proc() = mic.start(),
     stop: proc() = mic.stop(),
     close: proc() = mic.close(),
@@ -75,7 +101,10 @@ proc openMic(params: ptr ConstMicrophoneParams): MicrophoneHandle {.cdecl.} =
     capture = activeHost.factory(rate,
       max(1, rate * MicrophoneBufferMs div MillisecondsPerSecond))
     if capture == nil: raise newException(IOError, "No capture device")
-    let mic = CapturedMicrophone(capture: capture, rate: rate)
+    let actualRate = if capture.rate == 0: rate else: capture.rate
+    if actualRate notin 1..MaxMicrophoneRate:
+      raise newException(IOError, "Invalid negotiated microphone rate")
+    let mic = CapturedMicrophone(capture: capture, rate: actualRate)
     activeHost.handles.add(mic)
     return cast[MicrophoneHandle](mic)
   except CatchableError as error:
@@ -151,17 +180,19 @@ proc readMic(handle: MicrophoneHandle, samples: ptr int16, count: csize_t): cint
       stale -= size
     let size = min(available, int(count))
     if size > 0:
-      let data = mic.capture.read(size)
+      var data = mic.capture.read(size)
       if data.len != size * sizeof(int16):
         raise newException(IOError, "Incomplete microphone PCM")
+      data.applyMicrophoneGain(activeHost.gain)
       copyMem(samples, unsafeAddr data[0], data.len)
   except CatchableError as error:
     mic.report(error)
 
-proc newPlayerMicrophone*(factory: MicrophoneFactory = nil): PlayerMicrophone =
+proc newPlayerMicrophone*(factory: MicrophoneFactory = nil, gainDb = 0): PlayerMicrophone =
   ## Install one thread-local host without opening hardware until a core requests it.
   if activeHost != nil: raise newException(ValueError, "Microphone host already active")
-  result = PlayerMicrophone(factory: (if factory == nil: slappyCapture else: factory))
+  result = PlayerMicrophone(factory: (if factory == nil: slappyCapture else: factory),
+    gain: microphoneGainFactor(gainDb))
   result.api = MicrophoneInterface(version: MicrophoneVersion, open: openMic,
     close: closeMic, getParams: getParams, setState: setState, getState: getState, read: readMic)
   activeHost = result

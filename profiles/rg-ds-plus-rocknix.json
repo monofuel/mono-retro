@@ -10,6 +10,7 @@
   ],
   "audioDevice": "mono_retro_ds_plus",
   "audioPrebufferMs": 50,
+  "microphoneGainDb": 12,
   "volumeCard": "aw88166",
   "volumeControls": [
     "Left PCM",
