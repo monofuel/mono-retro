@@ -69,7 +69,7 @@ proc main() =
   putEnv("DISPLAY", testDisplay)
   let
     process = startProcess(absolutePath("build/mono-retro"), args = @[
-      "--library:" & root, "--config:" & configPath, "--device:generic", "--seconds:25"], options = {poParentStreams})
+      "--library:" & root, "--config:" & configPath, "--seconds:25"], options = {poParentStreams})
     display = XOpenDisplay(testDisplay.cstring)
   doAssert display != nil
   defer:

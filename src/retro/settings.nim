@@ -154,10 +154,12 @@ proc validate*(settings: Settings) =
 
 proc parseSettings*(arguments: seq[string], detected = genericDevice): Settings =
   result = defaultSettings()
+  # An empty parser prevents initOptParser(@[]) from reading process arguments.
+  let options = if arguments.len == 0: OptParser() else: initOptParser(arguments)
   var
     device = detected
     outputsOverridden = false
-  var parser = initOptParser(arguments)
+    parser = options
   for kind, key, value in parser.getopt():
     if kind == cmdLongOption and key == "device":
       case value
@@ -172,11 +174,11 @@ proc parseSettings*(arguments: seq[string], detected = genericDevice): Settings 
   of rgDsPlusDevice: result.applyProfile(parseJson(RgDsPlusProfile))
   of rgDsPlusRocknixDevice: result.applyProfile(parseJson(RgDsPlusRocknixProfile))
   of genericDevice: discard
-  parser = initOptParser(arguments)
+  parser = options
   for kind, key, value in parser.getopt():
     if kind == cmdLongOption and key == "profile":
       result.applyProfile(parseFile(value))
-  parser = initOptParser(arguments)
+  parser = options
   for kind, key, value in parser.getopt():
     case kind
     of cmdArgument: result.command = key
