@@ -21,10 +21,10 @@ with the same layout.
     └── screenshots/            # Exported screenshots and screenstates.
 ```
 
-The `mono-retro/` folders are prepared on the DS Plus games card. Browsing,
-RomM synchronization and card-backed game-launch configuration are separate
-work. Existing test wrappers still use their isolated OS-card save directories.
-Keep existing stock folders and filenames; no ROM reorganization is required.
+The [library launcher](library.md) uses these folders for browsing, RomM
+synchronization and card-backed play. Diagnostic test wrappers remain separate
+and can deliberately use isolated OS-card save directories. Existing stock
+folders can stay in place; the library does not require ROM reorganization.
 
 Use `mono-retro/saves/<core>/<rom-sha1>/` for a game's `--save-dir` when
 connecting the launcher. The current player stores `<ROM-stem>.srm`, `system/`,
@@ -33,9 +33,10 @@ avoid assuming that save formats are interchangeable. State imports also
 check the ROM and core build; storing a state on the games card does not make
 it compatible with every OS or core version.
 
-The player additionally exports screenstates to `~/Pictures/Screenshots/`.
-Those exports must be redirected to the card before enabling everyday play;
-`--capture-dir` changes session storage, not that additional export location.
+Direct player launches default to exporting screenstates in
+`~/Pictures/Screenshots/`. The library passes `--screenstate-dir` to put these
+on the card too. `--capture-dir` changes session storage, not that additional
+export location.
 Credentials remain in protected OS storage, not on the exFAT card.
 
 ## Mounting on Gentoo
@@ -68,8 +69,10 @@ mount /media/games
 findmnt -M /media/games -o SOURCE,TARGET,FSTYPE,OPTIONS
 ```
 
-This entry is local OS configuration; it must also be retained when preparing
-another OS card. It is not automatically added by the generic image builder.
+Monorig's `tools/handheld_library.nim HOST CARD_UUID [EARTHBOUND_SHA1]`
+emits the mount entry and launcher configuration for an existing handheld.
+Retain or regenerate this configuration when preparing another OS card; the
+generic image builder does not guess which removable volume contains games.
 OpenRC's `localmount` service mounts it before the existing launcher service.
 The data volume is `noexec`; installed applications and cores stay on the OS
 card. No automatic filesystem repair is enabled by this entry.

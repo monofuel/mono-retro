@@ -1,5 +1,13 @@
 # Launcher
 
+Use `--library:DIR --config:FILE` for the cover-grid game library, card-backed
+saves and RomM integration. See [the library guide](library.md) for setup,
+navigation and device authorization.
+
+## Diagnostic menu
+
+Without `--library`, the diagnostic launcher retains its explicit test entries.
+
 `mono-retro` has Hardware Test, System Info, Reboot, Shut Down and Decompbound entries. It uses Windy,
 Pixie and Paddy, sharing the tester's device profiles and app-owned mappings.
 The primary screen has a battery percentage/status toolbar. On DS Plus the
