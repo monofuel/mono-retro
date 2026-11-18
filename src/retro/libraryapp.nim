@@ -1,22 +1,24 @@
 import
   std/[json, monotimes, os, osproc, tempfiles, times],
   paddy, pixie, windy,
-  ./[anbernic, display, gamepad, gamelibrary, input, launcherui, libraryview,
-    menu, powercontrol, settings, systeminfo, systemvolume,
+  ./[anbernic, display, gamepad, gamelibrary, input, libraryview,
+    menu, menuthemes, powercontrol, settings, systeminfo, systemvolume,
     testerprocess, volumeui]
 
 type
   LibraryInput = enum
     MoveUp, MoveDown, MoveLeft, MoveRight, OpenGame, GoBack, OpenTools,
-    Favourite, Details, PreviousFilter, NextFilter
+    Favourite, Details, PreviousFilter, NextFilter, ActivateTarget
 
 const
   PollIntervalMs = 8
   PowerIntervalMs = 2000
   StickThreshold = 0.6'f32
+  StartupNetworkWaitSeconds = 60
+  NetworkProbeIntervalMs = 3000
 
 proc runLibrary*(root, configPath: string, displayArguments: seq[string],
-    duration: int, stopping: proc(): bool) =
+    duration: int, stopping: proc(): bool, themeOverride = "") =
   ## Supervise a portable library while releasing all hardware during gameplay.
   let
     paths = libraryPaths(root, configPath)
@@ -28,6 +30,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     jobDirectory = createTempDir("mono-retro-library-", "")
     progressPath = jobDirectory / "progress.json"
     started = getMonoTime()
+    preferencesPath = themePreferencesPath()
   createDir(jobDirectory)
   setFilePermissions(jobDirectory, {fpUserRead, fpUserWrite, fpUserExec})
   var
@@ -53,10 +56,14 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     pointerDragged = false
     pointerScreen = -1
     pending: seq[LibraryInput]
+    pendingTargets: seq[ViewTarget]
     job: Process
     jobKind: string
     pendingGame, offlineGame: string
     syncAfterScan = fileExists(paths.credentials)
+    waitingForNetwork = false
+    networkProbeAt = started
+    networkDeadline = started + initDuration(seconds = StartupNetworkWaitSeconds)
     quit = false
     sizes: seq[IVec2]
 
@@ -122,46 +129,17 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       if abs(point.y - pointerStart.y) > 24: pointerDragged = true
       if pointerDragged and abs(point.y - pointerLast.y) > 45:
         let direction = if point.y > pointerLast.y: -1 else: 1
-        case state.page
-        of GamesPage:
-          let count = index.visibleGames(state.filter).len
-          let columns = libraryLayout(screen.width(screenIndex), screen.height(screenIndex), state.selected, count).columns
-          state.selected = clamp(state.selected + direction * columns, 0, max(0, count - 1))
-        of ToolsPage: state.tool = clamp(state.tool + direction, 0, ToolLabels.high)
-        of CollectionsPage: state.collection = clamp(state.collection + direction, 0, max(0, index.collections.high))
-        of SystemPage: state.scroll = max(0, state.scroll + direction)
-        else: discard
+        state.moveSelection(index, screen.width(screenIndex), screen.height(screenIndex), direction, true)
         pointerLast = point
         dirty = true
     elif phase in {TouchEnd, TouchCancel} and pointerScreen == screenIndex and pointerId == id:
       pointerId = -1
       pointerScreen = -1
       if phase == TouchCancel or pointerDragged or abs(point.y - pointerStart.y) > 20: return
-      let layout = libraryLayout(screen.width(screenIndex), screen.height(screenIndex),
-        state.selected, index.visibleGames(state.filter).len)
-      if state.page == GamesPage:
-        for position, area in layout.cards:
-          if area.contains(point):
-            state.selected = layout.first + position
-            dirty = true
-        if layout.play.contains(point): pending.add OpenGame
-        if layout.tools.contains(point): pending.add OpenTools
-        if layout.previous.contains(point): pending.add PreviousFilter
-        if layout.next.contains(point): pending.add NextFilter
-      elif state.page in {ToolsPage, CollectionsPage}:
-        let
-          selected = if state.page == ToolsPage: state.tool else: state.collection
-          rows = max(1, (screen.height(screenIndex) - 150) div 43)
-          first = max(0, selected - rows + 1)
-          row = int(point.y - 115) div 43 + first
-          count = if state.page == ToolsPage: ToolLabels.len else: index.collections.len
-        if point.y >= 115 and row in 0 ..< count:
-          if state.page == ToolsPage: state.tool = row else: state.collection = row
-          pending.add OpenGame
-      elif state.page == GamePage: pending.add OpenGame
-      elif state.page in {PowerPage, ConflictPage}:
-        state.confirmYes = point.x > screen.width(screenIndex).float32 / 2
-        pending.add OpenGame
+      let item = state.pageLayout(index, screen.width(screenIndex), screen.height(screenIndex)).hitTarget(point)
+      if item.action != NoViewAction:
+        pendingTargets.add item
+        pending.add ActivateTarget
       dirty = true
 
   proc openScreens() =
@@ -180,6 +158,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
           for path in inputPaths(@[binding.device]): backInputs.add openInput(path)
     initGamepads()
     pending.setLen(0)
+    pendingTargets.setLen(0)
     armed = false
     mouseHeld = false
     pointerId = -1
@@ -208,6 +187,99 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     lock.close()
     if fileExists(paths.credentials): startJob("sync")
 
+  proc activate(item: ViewTarget) =
+    ## Keep application operations shared across every theme and input method.
+    if state.page == ToolsPage: state.tool = item.index
+    elif state.page == WorkbenchPage: state.workbench = item.index
+    case item.action
+    of SelectGame: state.selected = item.index
+    of ShowGames: state.page = GamesPage
+    of ShowTools: state.page = ToolsPage
+    of ShowAppearance: state.beginAppearance()
+    of SelectTheme: state.previewTheme = MenuTheme(item.index)
+    of ApplyTheme: state.applyAppearance(preferencesPath)
+    of CancelAppearance: state.cancelAppearance()
+    of SelectFilter:
+      state.filter = item.index
+      state.selected = 0
+    of PreviousFilter, NextFilter:
+      let count = index.filters().len
+      state.filter = (state.filter + count + (if item.action == NextFilter: 1 else: -1)) mod count
+      state.selected = 0
+    else:
+      if item.action == PlayGame and jobKind == "startup-probe":
+        cancelJob()
+        waitingForNetwork = false
+      if state.busy: return
+      waitingForNetwork = false
+      case item.action
+      of PlayGame:
+        let games = index.visibleGames(state.filter)
+        if games.len > 0:
+          let hash = games[state.selected].hash
+          if games[state.selected].saveConflict:
+            state.page = ConflictPage
+            state.confirmYes = false
+          elif fileExists(paths.credentials) and offlineGame != hash:
+            pendingGame = hash
+            startJob("sync-saves", @["--game:" & hash])
+          else:
+            offlineGame = ""
+            play(hash)
+      of TestHardware:
+        closeScreens()
+        try:
+          discard runTester(getAppDir() / "mono-retro-hwtest", @["test", "--seconds:3600"] & displayArguments, stopping)
+        finally:
+          if not stopping(): openScreens()
+      of ShowSystem: state.page = SystemPage
+      of ShowCollections:
+        state.page = CollectionsPage
+        startJob("collections")
+      of ConnectRomm:
+        state.page = PairPage
+        startJob("pair")
+      of SyncRomm: startJob("sync")
+      of DisconnectRomm: startJob("disconnect")
+      of RebootDevice, ShutdownDevice:
+        state.reboot = item.action == RebootDevice
+        state.page = PowerPage
+        state.confirmYes = false
+      of RescanGames:
+        syncAfterScan = false
+        startJob("scan")
+      of ToggleCollection:
+        if item.index in 0 ..< index.collections.len:
+          state.collection = item.index
+          startJob("select", @["--id:" & $index.collections[item.index].id])
+      of CancelDialog: state.page = state.theme.homePage()
+      of ConfirmPower:
+        let reason = power.powerBlockReason()
+        if reason.len > 0: raise newException(IOError, reason)
+        var request = requestPower(if state.reboot: RebootSystem else: ShutdownSystem)
+        try:
+          discard request.waitForExit()
+          checkPowerRequest(request, if state.reboot: RebootSystem else: ShutdownSystem)
+        finally:
+          if request != nil: request.close()
+        state.message = "Power request accepted"
+        state.page = state.theme.homePage()
+      of UseLocalSave, UseRemoteSave:
+        let games = index.visibleGames(state.filter)
+        if games.len > 0:
+          pendingGame = games[state.selected].hash
+          startJob("resolve", @["--game:" & pendingGame,
+            "--choice:" & (if item.action == UseRemoteSave: "server" else: "local")])
+          state.page = GamesPage
+      else: discard
+
+  try:
+    state.theme = if themeOverride.len > 0: parseTheme(themeOverride) else: loadTheme(preferencesPath)
+  except CatchableError as error:
+    stderr.writeLine("Menu preferences: " & error.msg)
+    state.message = error.msg
+    state.error = true
+  state.page = state.theme.homePage()
   openScreens()
   try:
     reload()
@@ -234,26 +306,44 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
             not parseFile(progressPath).hasKey("error")):
           state.message = "Library operation failed (code " & $code & "); see the launcher log"
         try:
-          reload()
-          if pendingGame.len > 0:
-            let hash = pendingGame
-            pendingGame = ""
-            if code == 0: play(hash)
+          if jobKind == "startup-probe":
+            if code == 0:
+              waitingForNetwork = false
+              startJob("sync")
             else:
-              offlineGame = hash
-              state.message &= " · Play again to use your local save"
-          elif jobKind == "scan" and syncAfterScan:
-            syncAfterScan = false
-            startJob("sync")
-          elif code == 0 and jobKind in ["pair", "select"]:
-            if jobKind == "pair": state.page = CollectionsPage
-            startJob("sync")
+              waitingForNetwork = getMonoTime() < networkDeadline
+              networkProbeAt = getMonoTime() + initDuration(milliseconds = NetworkProbeIntervalMs)
+              state.error = false
+              state.message = if waitingForNetwork:
+                "RomM offline; waiting for network. Local games are available."
+              else: "RomM offline; local games are available. Use Sync now to retry."
+          else:
+            reload()
+            if pendingGame.len > 0:
+              let hash = pendingGame
+              pendingGame = ""
+              if code == 0: play(hash)
+              else:
+                offlineGame = hash
+                state.message &= " · Play again to use your local save"
+            elif jobKind == "scan" and syncAfterScan:
+              syncAfterScan = false
+              waitingForNetwork = true
+              networkProbeAt = getMonoTime()
+            elif code == 0 and jobKind in ["pair", "select"]:
+              if jobKind == "pair":
+                if state.page == AppearancePage: state.appearanceReturn = CollectionsPage
+                else: state.page = CollectionsPage
+              startJob("sync")
         except CatchableError as error:
           state.message = error.msg
           state.error = true
         dirty = true
         state.transition = 0
         transitionStarted = getMonoTime()
+    if waitingForNetwork and job == nil and getMonoTime() >= networkProbeAt:
+      startJob("probe")
+      jobKind = "startup-probe"
     if volume != nil:
       let nowNs = getMonoTime().ticks
       let changed = volume.poll(nowNs)
@@ -319,99 +409,47 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     for action in pending:
       try:
         if action == GoBack:
+          if state.page == AppearancePage:
+            state.cancelAppearance()
+            dirty = true
+            continue
           let cancelling = job != nil
           if job != nil:
             cancelJob()
+            waitingForNetwork = false
             pendingGame = ""
             state.message = "Cancelled; local files are preserved"
-          if state.page != GamesPage: state.page = GamesPage
+          if state.page in {WorkbenchPage, GamePage}: state.page = GamesPage
+          elif state.page != state.theme.homePage(): state.page = state.theme.homePage()
           elif desktop and not cancelling: quit = true
-        elif action == OpenTools: state.page = ToolsPage
+        elif action == OpenTools:
+          if state.page != AppearancePage: state.page = ToolsPage
         elif action in {PreviousFilter, NextFilter}:
-          let count = index.filters().len
-          state.filter = (state.filter + count + (if action == NextFilter: 1 else: -1)) mod count
-          state.selected = 0
+          if state.page == AppearancePage:
+            state.moveSelection(index, screen.width(screen.count() - 1), screen.height(screen.count() - 1),
+              if action == NextFilter: 1 else: -1, false)
+          elif state.page in {GamesPage, GamePage}:
+            activate(ViewTarget(action: if action == NextFilter: ViewAction.NextFilter else: ViewAction.PreviousFilter))
         elif action in {MoveUp, MoveDown, MoveLeft, MoveRight}:
           let direction = if action in {MoveUp, MoveLeft}: -1 else: 1
-          case state.page
-          of GamesPage:
-            let count = index.visibleGames(state.filter).len
-            let columns = libraryLayout(screen.width(screen.count() - 1), screen.height(screen.count() - 1), state.selected, count).columns
-            state.selected = clamp(state.selected + direction * (if action in {MoveUp, MoveDown}: columns else: 1), 0, max(0, count - 1))
-          of ToolsPage: state.tool = clamp(state.tool + direction, 0, ToolLabels.high)
-          of CollectionsPage: state.collection = clamp(state.collection + direction, 0, max(0, index.collections.high))
-          of SystemPage: state.scroll = max(0, state.scroll + direction)
-          of PowerPage, ConflictPage: state.confirmYes = direction > 0
-          else: discard
-        elif not armed or state.busy: discard
+          state.moveSelection(index, screen.width(screen.count() - 1), screen.height(screen.count() - 1),
+            direction, action in {MoveUp, MoveDown})
+        elif action == ActivateTarget:
+          let item = pendingTargets[0]
+          pendingTargets.delete(0)
+          if armed:
+            armed = false
+            activate(item)
+        elif not armed: discard
         elif action == Favourite:
           let games = index.visibleGames(state.filter)
-          if games.len > 0: startJob("favourite", @["--game:" & games[state.selected].hash])
-        elif action == Details: state.page = GamePage
+          if not state.busy and state.page in {GamesPage, GamePage} and games.len > 0:
+            startJob("favourite", @["--game:" & games[state.selected].hash])
+        elif action == Details:
+          if state.page in {GamesPage, GamePage}: state.page = GamePage
         elif action == OpenGame:
           armed = false
-          case state.page
-          of GamesPage, GamePage:
-            let games = index.visibleGames(state.filter)
-            if games.len > 0:
-              let hash = games[state.selected].hash
-              if games[state.selected].saveConflict:
-                state.page = ConflictPage
-                state.confirmYes = false
-              elif fileExists(paths.credentials) and offlineGame != hash:
-                pendingGame = hash
-                startJob("sync-saves", @["--game:" & hash])
-              else:
-                offlineGame = ""
-                play(hash)
-          of ToolsPage:
-            case state.tool
-            of 0:
-              closeScreens()
-              try:
-                discard runTester(getAppDir() / "mono-retro-hwtest", @["test", "--seconds:3600"] & displayArguments, stopping)
-              finally:
-                if not stopping(): openScreens()
-            of 1: state.page = SystemPage
-            of 2:
-              state.page = CollectionsPage
-              startJob("collections")
-            of 3:
-              state.page = PairPage
-              startJob("pair")
-            of 4: startJob("sync")
-            of 5: startJob("disconnect")
-            of 6, 7:
-              state.reboot = state.tool == 6
-              state.page = PowerPage
-              state.confirmYes = false
-            of 8:
-              syncAfterScan = false
-              startJob("scan")
-            else: discard
-          of CollectionsPage:
-            if index.collections.len > 0:
-              startJob("select", @["--id:" & $index.collections[state.collection].id])
-          of PowerPage:
-            if state.confirmYes:
-              let reason = power.powerBlockReason()
-              if reason.len > 0: raise newException(IOError, reason)
-              var request = requestPower(if state.reboot: RebootSystem else: ShutdownSystem)
-              try:
-                discard request.waitForExit()
-                checkPowerRequest(request, if state.reboot: RebootSystem else: ShutdownSystem)
-              finally:
-                if request != nil: request.close()
-              state.message = "Power request accepted"
-            state.page = GamesPage
-          of ConflictPage:
-            let games = index.visibleGames(state.filter)
-            if games.len > 0:
-              pendingGame = games[state.selected].hash
-              startJob("resolve", @["--game:" & pendingGame,
-                "--choice:" & (if state.confirmYes: "server" else: "local")])
-              state.page = GamesPage
-          else: discard
+          activate(state.selectedTarget())
         dirty = true
         state.transition = 0
         transitionStarted = getMonoTime()

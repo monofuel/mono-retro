@@ -1,7 +1,7 @@
 import
   std/[monotimes, os, osproc, parseopt, posix, strutils, times],
   paddy, pixie, windy,
-  retro/[anbernic, display, gamepad, input, launcherui, libraryapp, menu, powercontrol, settings,
+  retro/[anbernic, display, gamepad, input, launcherui, libraryapp, menu, menuthemes, powercontrol, settings,
     systeminfo, systemvolume, testerprocess, volumeui]
 
 const
@@ -13,6 +13,7 @@ const
   WheelNotch = 10'f32
   Help = """Usage: mono-retro [--library:DIR --config:FILE] [--seconds:N] [device/display options]
 With --library, browse games, manage RomM and launch the player using card-backed saves.
+Use --theme:library|showcase|pocket|workbench for a temporary library style override.
 Without --library, retain the diagnostic menu and its --tester, --decompbound and --lost-in-blue overrides.
 Hardware Test, System Info, Reboot, Shut Down, Decompbound and installed Lost in Blue.
 Use arrows/D-pad/stick, A/Enter to open, and B/Back/Escape to return.
@@ -34,6 +35,7 @@ proc main() =
     decompbound = getAppDir() / "mono-retro-decompbound"
     lostInBlue = getAppDir() / "mono-retro-lost-in-blue"
     libraryRoot: string
+    themeOverride: string
     libraryConfig = getHomeDir() / ".config" / "mono-retro" / "library.json"
     duration = 0
     parser = initOptParser(commandLineParams())
@@ -43,6 +45,9 @@ proc main() =
     elif kind == cmdLongOption and key == "lost-in-blue": lostInBlue = absolutePath(value)
     elif kind == cmdLongOption and key == "library": libraryRoot = absolutePath(value)
     elif kind == cmdLongOption and key == "config": libraryConfig = absolutePath(value)
+    elif kind == cmdLongOption and key == "theme":
+      discard parseTheme(value)
+      themeOverride = value
     elif kind == cmdLongOption and key == "seconds":
       duration = parseInt(value)
       if duration < 1: raise newException(ValueError, "Duration must be positive")
@@ -54,7 +59,7 @@ proc main() =
   if libraryRoot.len > 0:
     posix.signal(SIGINT, stopHandler)
     posix.signal(SIGTERM, stopHandler)
-    runLibrary(libraryRoot, libraryConfig, arguments, duration, proc(): bool = stopping)
+    runLibrary(libraryRoot, libraryConfig, arguments, duration, proc(): bool = stopping, themeOverride)
     return
   let
     settings = parseSettings(arguments, detectDevice())

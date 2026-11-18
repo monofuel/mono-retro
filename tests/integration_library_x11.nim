@@ -1,7 +1,7 @@
 import
   std/[json, jsonutils, monotimes, os, osproc, strutils, tempfiles, times],
   windy/platforms/linux/x11/[x, xevent, xlib],
-  retro/gamelibrary
+  retro/[gamelibrary, menuthemes]
 
 proc queryTree(d: Display, window: Window, root, parent: ptr Window,
     children: ptr ptr UncheckedArray[Window], count: ptr cuint): cint
@@ -67,9 +67,10 @@ proc main() =
     CoreConfig(key: "ds", path: core, platforms: @["nds"])])
   writeFile(configPath, $config.toJson())
   putEnv("DISPLAY", testDisplay)
+  putEnv("XDG_CONFIG_HOME", root / "preferences")
   let
     process = startProcess(absolutePath("build/mono-retro"), args = @[
-      "--library:" & root, "--config:" & configPath, "--seconds:25"], options = {poParentStreams})
+      "--library:" & root, "--config:" & configPath, "--seconds:40"], options = {poParentStreams})
     display = XOpenDisplay(testDisplay.cstring)
   doAssert display != nil
   defer:
@@ -100,7 +101,69 @@ proc main() =
   press(display, window, 0xff54)
   press(display, window, 0xff0d)
   press(display, window, 0xff1b)
+  let preferences = themePreferencesPath()
+  for theme in [ShowcaseTheme, PocketTheme, WorkbenchTheme, LibraryTheme]:
+    press(display, window, 0xff09)
+    for attempt in 0 ..< 10: press(display, window, 0xff52)
+    for attempt in 0 ..< 2: press(display, window, 0xff54)
+    press(display, window, 0xff0d)
+    press(display, window, 0xff53)
+    doAssert loadTheme(preferences) != theme
+    press(display, window, 0xff0d)
+    doAssert loadTheme(preferences) == theme
+    if theme == WorkbenchTheme:
+      press(display, window, 0xff54)
+      press(display, window, 0xff0d)
+    press(display, window, 0xff0d)
+    window = findWindow(display, window)
+    doAssert fileExists(marker)
+    sleep(100)
+  press(display, window, 0xff09)
+  press(display, window, 0xff0d)
+  press(display, window, 0xff53)
+  press(display, window, 0xff1b)
+  doAssert loadTheme(preferences) == LibraryTheme
+  press(display, window, 0xff1b)
   press(display, window, 0xff1b)
   doAssert process.waitForExit(5000) == 0
+
+  # Simulate Wi-Fi becoming available after the first startup probe fails.
+  let
+    runtime = root / "runtime"
+    probeCount = root / "probe-count"
+    synced = root / "startup-synced"
+    worker = runtime / "mono-retro-library"
+  createDir(runtime)
+  createDir(paths.credentials.parentDir)
+  writeFile(paths.credentials, "synthetic presence marker; never a real token")
+  copyFile(absolutePath("build/mono-retro"), runtime / "mono-retro")
+  setFilePermissions(runtime / "mono-retro", {fpUserRead, fpUserWrite, fpUserExec})
+  writeFile(worker, "#!/bin/sh\nset -eu\n" &
+    "progress=''\nfor arg in \"$@\"; do case \"$arg\" in --progress:*) progress=${arg#--progress:};; esac; done\n" &
+    "case \"$1\" in\nscan) exec " & quoteShell(absolutePath("build/mono-retro-library")) & " \"$@\";;\n" &
+    "probe)\n count=0\n test ! -f " & quoteShell(probeCount) & " || count=$(cat " & quoteShell(probeCount) & ")\n" &
+    " count=$((count + 1))\n echo \"$count\" > " & quoteShell(probeCount) & "\n" &
+    " if test \"$count\" -eq 1; then\n" &
+    " printf '%s' '{\"message\":\"Cannot reach RomM\",\"error\":true}' > \"$progress.tmp\"\n" &
+    " mv \"$progress.tmp\" \"$progress\"\n exit 1\n fi;;\n" &
+    "sync) touch " & quoteShell(synced) & ";;\nesac\n" &
+    "printf '%s' '{\"message\":\"Ready\",\"running\":false}' > \"$progress.tmp\"\n" &
+    "mv \"$progress.tmp\" \"$progress\"\n")
+  setFilePermissions(worker, {fpUserRead, fpUserWrite, fpUserExec})
+  let recovering = startProcess(runtime / "mono-retro", args = @[
+    "--library:" & root, "--config:" & configPath, "--theme:pocket", "--seconds:20"],
+    options = {poParentStreams})
+  defer:
+    if recovering.running(): recovering.terminate()
+    discard recovering.waitForExit(5000)
+    recovering.close()
+  window = findWindow(display, window)
+  let recoveredDeadline = getMonoTime() + initDuration(seconds = 10)
+  while not fileExists(synced) and getMonoTime() < recoveredDeadline: sleep(50)
+  doAssert fileExists(synced)
+  doAssert readFile(probeCount).strip() == "2"
+  doAssert loadTheme(preferences) == LibraryTheme
+  press(display, window, 0xff1b)
+  doAssert recovering.waitForExit(5000) == 0
 
 main()

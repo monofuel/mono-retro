@@ -57,6 +57,10 @@ Core libraries remain externally installed artifacts.
 - DS Plus: covers and touch controls below, selected-game details above.
   Single-screen devices use the same grid with a separate details page.
 
+Choose **Menu → Appearance** for live previews of Library, Showcase, Pocket and
+Workbench. Apply saves the style on this device; Cancel keeps the current one.
+See [menu themes](menu-themes.md) for layouts and temporary command-line overrides.
+
 The scanner recognizes loose `.nds`, `.gba`, `.gb`, `.gbc`, `.nes`, `.smc` and `.sfc`
 files. It does not patch, trim, rename or extract existing ROMs. Content hashes
 separate same-named revisions and retain favourites/history when files move.
@@ -95,6 +99,11 @@ cartridge saves sync with the server's `autosave` slot. Named/archival slots
 and emulator states are not substituted for that active save. Failed network
 sync leaves local progress intact; Play again continues with the local save.
 The next successful sync retries pending local changes.
+
+At startup, the menu checks RomM readiness before syncing. If Wi-Fi or the server
+is not ready, it retries every three seconds for up to one minute while local
+games remain available. Afterwards, use **Sync now** to try again. Authorization
+and save-conflict errors still require their normal explicit action.
 
 If local and server saves conflict, choose which to continue with. Both
 versions are preserved before applying the choice. A remote deletion also

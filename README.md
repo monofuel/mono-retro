@@ -105,7 +105,8 @@ make check test test-player
 ## Guides
 
 - [Game library](docs/library.md): cover browsing, card-backed saves and RomM pairing/sync.
-- [Menu styling](docs/menu-styling.md): brainstorming for themes, layouts and browsing.
+- [Menu themes](docs/menu-themes.md): preview and switch Library, Showcase, Pocket and Workbench in the app.
+- [Menu styling](docs/menu-styling.md): ideas for future themes, layouts and browsing.
 - [Player](README-player.md): cores, controls, saves, state imports and DS layouts.
 - [Launcher](docs/launcher.md): navigation, battery status and handheld installation.
 - [Hardware test](docs/hardware-test.md): display, input, sound and calibration.

@@ -1,7 +1,8 @@
 # Menu styling and themes
 
-Brainstorming for the mono-retro menu. These are ideas to explore; priorities,
-visual designs and the theme interface remain open.
+Brainstorming for the mono-retro menu. Library, Showcase, Pocket and Workbench
+now have an initial implementation; see [menu themes](menu-themes.md) to try them.
+The ideas below remain a broader wishlist, rather than a list of shipped features.
 
 The menu should feel good on an RG SP, an RG DS Plus and an X11 desktop.
 Different themes could make those experiences look and behave quite differently.
