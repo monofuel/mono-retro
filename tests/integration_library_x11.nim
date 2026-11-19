@@ -110,6 +110,8 @@ proc main() =
     press(display, window, 0xff53)
     doAssert loadTheme(preferences) != theme
     press(display, window, 0xff0d)
+    let appliedDeadline = getMonoTime() + initDuration(seconds = 3)
+    while loadTheme(preferences) != theme and getMonoTime() < appliedDeadline: sleep(10)
     doAssert loadTheme(preferences) == theme
     if theme == WorkbenchTheme:
       press(display, window, 0xff54)
@@ -118,6 +120,19 @@ proc main() =
     window = findWindow(display, window)
     doAssert fileExists(marker)
     sleep(100)
+  # Settings -> Wi-Fi must report a missing manager without disturbing the launcher.
+  press(display, window, 0xff09)
+  for attempt in 0 ..< 10: press(display, window, 0xff52)
+  for attempt in 0 ..< 3: press(display, window, 0xff54)
+  press(display, window, 0xff0d)
+  press(display, window, 0xff0d)
+  sleep(500)
+  press(display, window, 0xff1b)
+  press(display, window, 0xff1b)
+  doAssert process.running()
+  press(display, window, 0xff09)
+  press(display, window, 0xff52)
+  press(display, window, 0xff1b)
   press(display, window, 0xff09)
   press(display, window, 0xff0d)
   press(display, window, 0xff53)
@@ -163,6 +178,36 @@ proc main() =
   doAssert fileExists(synced)
   doAssert readFile(probeCount).strip() == "2"
   doAssert loadTheme(preferences) == LibraryTheme
+  let
+    wifiPolls = root / "wifi-status-polls"
+    unexpectedConnect = root / "unexpected-wifi-connect"
+    wifiWorker = runtime / "mono-retro-wifi"
+    wifiResult = $(%*{"status": {"state": "COMPLETED", "ssid": "Fixture",
+      "ipAddress": "192.0.2.10", "keyManagement": "WPA2-PSK", "networkId": 0},
+      "networks": [], "fresh": true})
+  writeFile(wifiWorker, "#!/bin/sh\nset -eu\nresult=''\n" &
+    "for arg in \"$@\"; do case \"$arg\" in --result:*) result=${arg#--result:};; esac; done\n" &
+    "case \"$1\" in\nstatus)\n count=0\n test ! -f " & quoteShell(wifiPolls) &
+    " || count=$(cat " & quoteShell(wifiPolls) & ")\n echo $((count + 1)) > " &
+    quoteShell(wifiPolls) & ";;\nscan) :;;\n*) touch " & quoteShell(unexpectedConnect) &
+    "; exit 99;;\nesac\n" &
+    "printf '%s' " & quoteShell(wifiResult) & " > \"$result.tmp\"\n" &
+    "mv \"$result.tmp\" \"$result\"\n")
+  setFilePermissions(wifiWorker, {fpUserRead, fpUserWrite, fpUserExec})
+  press(display, window, 0xff09)
+  for attempt in 0 ..< 10: press(display, window, 0xff52)
+  for attempt in 0 ..< 3: press(display, window, 0xff54)
+  press(display, window, 0xff0d)
+  press(display, window, 0xff0d)
+  let statusDeadline = getMonoTime() + initDuration(seconds = 6)
+  while getMonoTime() < statusDeadline:
+    if fileExists(wifiPolls) and parseInt(readFile(wifiPolls).strip()) >= 2: break
+    sleep(50)
+  doAssert fileExists(wifiPolls) and parseInt(readFile(wifiPolls).strip()) >= 2
+  doAssert not fileExists(unexpectedConnect)
+  doAssert recovering.running()
+  press(display, window, 0xff1b)
+  press(display, window, 0xff1b)
   press(display, window, 0xff1b)
   doAssert recovering.waitForExit(5000) == 0
 

@@ -1,26 +1,38 @@
 import
   std/[algorithm, os, strutils, tables, unicode, wordwrap],
   pixie,
-  ./[gamelibrary, launcherui, menuthemes, pattern, systeminfo]
+  ../touchkeyboard,
+  ./[gamelibrary, launcherui, menuthemes, pattern, systeminfo, wifi]
 
 type
   LibraryPage* = enum
     GamesPage, ToolsPage, CollectionsPage, GamePage, SystemPage, PairPage,
-    PowerPage, ConflictPage, WorkbenchPage, AppearancePage
+    PowerPage, ConflictPage, WorkbenchPage, AppearancePage, SettingsPage,
+    WifiPage, WifiPasswordPage, WifiConfirmPage
   ViewAction* = enum
     NoViewAction, SelectGame, PlayGame, ShowGames, ShowTools, TestHardware,
     ShowSystem, ShowCollections, ConnectRomm, SyncRomm, DisconnectRomm,
     RebootDevice, ShutdownDevice, RescanGames, ShowAppearance, SelectTheme,
     ApplyTheme, CancelAppearance, PreviousFilter, NextFilter, ToggleCollection,
-    CancelDialog, ConfirmPower, UseLocalSave, UseRemoteSave, SelectFilter
+    CancelDialog, ConfirmPower, UseLocalSave, UseRemoteSave, SelectFilter,
+    ShowSettings, ShowWifi, SelectWifiNetwork, RescanWifi, ConnectWifi, CancelWifi
   ViewTarget* = object
     area*: UiRect
     action*: ViewAction
     index*: int
+  WifiView* = object
+    ## Wi-Fi settings data shown by the view; filled by the launcher's worker.
+    status*: WifiStatus
+    networks*: seq[WifiNetwork]
+    selected*: int
+    message*: string
+    error*, busy*, connecting*, unavailable*: bool
+    keyboard*: TouchKeyboard
   LibraryViewState* = object
     page*, appearanceReturn*: LibraryPage
     theme*, previewTheme*: MenuTheme
-    selected*, tool*, collection*, filter*, scroll*, workbench*: int
+    selected*, tool*, collection*, filter*, scroll*, workbench*, setting*: int
+    wifi*: WifiView
     message*: string
     busy*, error*, confirmYes*, reboot*: bool
     transition*: float32
@@ -39,14 +51,21 @@ const
   CoverHeight = 480
   MaximumCoverPixels = 4_000_000
   WorkbenchFooterHeight = 64
-  ToolActions* = [TestHardware, ShowSystem, ShowAppearance, ShowCollections,
+  ToolActions* = [TestHardware, ShowSystem, ShowAppearance, ShowSettings, ShowCollections,
     ConnectRomm, SyncRomm, DisconnectRomm, RebootDevice, ShutdownDevice, RescanGames]
-  WorkbenchActions* = [TestHardware, ShowSystem, ShowGames, SyncRomm, ShowAppearance, ShowTools]
+  WorkbenchActions* = [TestHardware, ShowSystem, ShowGames, SyncRomm, ShowAppearance,
+    ShowSettings, ShowTools]
+  SettingsActions* = [ShowWifi, ShowAppearance]
+  MinimumWorkbenchItem = 30
+  WifiListTop = 150
+  ListRowHeight = 38
+  ListRowStep = 43
   ActionLabels*: array[ViewAction, string] = ["", "", "Play", "Games", "Menu",
     "Hardware Test", "System Info", "RomM collections", "Connect to RomM",
     "Sync now", "Disconnect RomM", "Reboot", "Shut down", "Rescan games",
     "Appearance", "", "Apply", "Cancel", "Previous filter", "Next filter", "",
-    "Cancel", "Confirm", "Local save", "RomM save", ""]
+    "Cancel", "Confirm", "Local save", "RomM save", "", "Settings", "Wi-Fi", "",
+    "Scan", "Connect", "Cancel"]
   DefaultText = 0xffffffff'u32
 
 proc newLibraryUi*(): LibraryUi =
@@ -126,6 +145,10 @@ proc pageLayout*(state: LibraryViewState, index: LibraryIndex,
       result.targets.add target(layout.next, NextFilter)
   of WorkbenchPage:
     result.columns = if width >= 300: 2 else: 1
+    let twoColumnRows = (WorkbenchActions.len + result.columns - 1) div result.columns
+    if result.columns == 2 and (height - 108 - WorkbenchFooterHeight - 10 * (twoColumnRows - 1)) div
+        twoColumnRows < MinimumWorkbenchItem:
+      result.columns = 3
     let
       rows = (WorkbenchActions.len + result.columns - 1) div result.columns
       gap = 10
@@ -146,6 +169,24 @@ proc pageLayout*(state: LibraryViewState, index: LibraryIndex,
       result.targets.add target(UiRect(x: 16, y: 115 + (item - first) * 43,
         width: width - 32, height: 38),
         if state.page == ToolsPage: ToolActions[item] else: ToggleCollection, item)
+  of SettingsPage:
+    for item, action in SettingsActions:
+      result.targets.add target(UiRect(x: 16, y: 115 + item * ListRowStep,
+        width: width - 32, height: ListRowHeight), action, item)
+  of WifiPage:
+    let
+      footer = themeLayout(state.theme, width, height, 0, 0)
+      rows = max(1, (footer.play.y - 8 - WifiListTop) div ListRowStep)
+      first = max(0, state.wifi.selected - rows + 1)
+    for item in first ..< min(state.wifi.networks.len, first + rows):
+      result.targets.add target(UiRect(x: 16, y: WifiListTop + (item - first) * ListRowStep,
+        width: width - 32, height: ListRowHeight), SelectWifiNetwork, item)
+    result.targets.add target(footer.play, RescanWifi)
+    result.targets.add target(footer.tools, ShowSettings)
+  of WifiConfirmPage:
+    let footer = themeLayout(state.theme, width, height, 0, 0)
+    result.targets.add target(footer.play, ConnectWifi)
+    result.targets.add target(footer.tools, CancelWifi)
   of AppearancePage:
     let footer = themeLayout(state.theme, width, height, 0, 0)
     result.targets.add target(footer.play, ApplyTheme)
@@ -185,7 +226,13 @@ proc moveSelection*(state: var LibraryViewState, index: LibraryIndex,
     state.previewTheme = MenuTheme((ord(state.previewTheme) + ThemeNames.len + direction) mod ThemeNames.len)
   of SystemPage: state.scroll = max(0, state.scroll + direction)
   of PowerPage, ConflictPage: state.confirmYes = direction > 0
+  of SettingsPage: state.setting = clamp(state.setting + direction, 0, SettingsActions.high)
+  of WifiPage: state.wifi.selected = clamp(state.wifi.selected + direction, 0, max(0, state.wifi.networks.high))
   else: discard
+
+proc keyboardArea*(width, height: int): Rect =
+  ## Place the password keyboard below the toolbar on the touch screen.
+  rect(0, 64, width.float32, max(1, height - 64).float32)
 
 proc selectedTarget*(state: LibraryViewState): ViewTarget =
   ## Translate controller confirmation into the same action as a visible button.
@@ -197,6 +244,11 @@ proc selectedTarget*(state: LibraryViewState): ViewTarget =
   of AppearancePage: result.action = ApplyTheme
   of PowerPage: result.action = if state.confirmYes: ConfirmPower else: CancelDialog
   of ConflictPage: result.action = if state.confirmYes: UseRemoteSave else: UseLocalSave
+  of SettingsPage: result = ViewTarget(action: SettingsActions[state.setting], index: state.setting)
+  of WifiPage:
+    result = if state.wifi.networks.len > 0:
+      ViewTarget(action: SelectWifiNetwork, index: state.wifi.selected) else: ViewTarget(action: RescanWifi)
+  of WifiConfirmPage: result.action = ConnectWifi
   else: discard
 
 proc beginAppearance*(state: var LibraryViewState) =
@@ -326,6 +378,115 @@ proc systemIcon(ui: LibraryUi, image: Image, area: UiRect, platform: string) =
   image.rect(x + 4, y + 4, 16, if platform == "nds": 6 else: 12, ui.palette.surface)
   image.rect(x + 4, y + 15, 16, 6, ui.palette.surface)
 
+proc tint(value: uint32): chroma.Color =
+  ## Convert a packed RGB theme colour.
+  color(float32(value shr 16 and 255) / 255, float32(value shr 8 and 255) / 255,
+    float32(value and 255) / 255, 1)
+
+proc keyboardTheme*(palette: ThemePalette): KeyboardTheme =
+  ## Derive keyboard colours from a launcher theme.
+  KeyboardTheme(background: tint(palette.background), field: tint(palette.surface),
+    key: tint(palette.surface), special: mix(tint(palette.surface), tint(palette.background), 0.5),
+    focused: tint(palette.selected), text: tint(palette.text), muted: tint(palette.muted),
+    accent: tint(palette.accent))
+
+proc signalPercent*(network: WifiNetwork): int =
+  ## Approximate signal quality from dBm for display.
+  clamp(2 * (network.signal + 100), 0, 100)
+
+proc wifiStatusLines*(view: WifiView): seq[string] =
+  ## Describe the current connection in short display lines.
+  if view.unavailable: return @["Wi-Fi unavailable on this device"]
+  let status = view.status
+  result.add(if status.state == "COMPLETED": "Connected to " & status.ssid
+    elif status.state.len == 0: "Checking Wi-Fi…"
+    else: "Not connected (" & status.state.toLowerAscii() & ")")
+  if status.ipAddress.len > 0: result.add "Address " & status.ipAddress
+
+proc networkNote(network: WifiNetwork): string =
+  ## Summarize security and saved state for a list row.
+  let kind = if network.security notin SupportedSecurity: "Unsupported"
+    elif network.savedId >= 0: "Saved"
+    elif network.security == OpenSecurity: "Open"
+    else: "Password"
+  kind & "  " & $network.signalPercent() & "%"
+
+proc drawWifi(ui: LibraryUi, image: Image, state: LibraryViewState,
+    areas: PageLayout, width, height: int, detailsScreen: bool) =
+  ## Render Settings and Wi-Fi pages; the details screen carries status and progress.
+  let
+    p = ui.palette
+    view = state.wifi
+    network = if view.networks.len > 0: view.networks[clamp(view.selected, 0, view.networks.high)]
+      else: WifiNetwork(savedId: -1)
+    characters = max(10, (width - 48) div 10)
+  if detailsScreen:
+    ui.label(image, "WI-FI", 24, 88, 25, p.accent)
+    var y = 136
+    for line in view.wifiStatusLines():
+      ui.label(image, shortText(line, characters), 24, y, 18)
+      y += 27
+    if state.page in {WifiPage, WifiConfirmPage, WifiPasswordPage} and network.ssid.len > 0:
+      y += 14
+      for line in [network.ssid, SecurityNames[network.security],
+          "Signal " & $network.signalPercent() & "%  " &
+            (if network.frequency >= 5925: "6 GHz" elif network.frequency >= 4900: "5 GHz" else: "2.4 GHz"),
+          if network.savedId >= 0: "Saved on this device" else: "Not saved yet"]:
+        if y < height - 70:
+          ui.label(image, shortText(line, characters), 24, y, 17, p.muted)
+          y += 25
+    if state.page == WifiPasswordPage and y < height - 70:
+      ui.label(image, "8-63 characters, or a 64-digit hex key.", 24, y + 8, 15, p.muted)
+      if y + 33 < height - 70: ui.label(image, "Hidden unless you choose Show.", 24, y + 33, 15, p.muted)
+    if view.message.len > 0:
+      ui.label(image, shortText(view.message, characters), 24, height - 40, 16,
+        if view.error: 0xc95138'u32 else: p.accent)
+    return
+  case state.page
+  of SettingsPage:
+    ui.label(image, "Settings", 24, 80, 23, p.accent)
+    for item in areas.targets: ui.button(image, item, ActionLabels[item.action], item.index == state.setting)
+  of WifiPage:
+    ui.label(image, "Wi-Fi", 24, 80, 23, p.accent)
+    let statusLines = view.wifiStatusLines()
+    ui.label(image, shortText(statusLines.join("  ·  "), max(10, (width - 48) div 8)), 24, 116, 15, p.muted)
+    for item in areas.targets:
+      case item.action
+      of SelectWifiNetwork:
+        let entry = view.networks[item.index]
+        ui.button(image, ViewTarget(area: UiRect(x: item.area.x, y: item.area.y,
+          width: max(1, item.area.width - 130), height: item.area.height)),
+          (if entry.current: "• " else: "") & entry.ssid, item.index == view.selected)
+        image.rect(item.area.x + item.area.width - 130, item.area.y, 130, item.area.height,
+          if item.index == view.selected: p.selected else: p.surface)
+        ui.label(image, entry.networkNote(), item.area.x + item.area.width - 122,
+          item.area.y + (item.area.height - 14) div 2 - 1, 13,
+          if entry.security in SupportedSecurity: p.muted else: 0xc95138'u32)
+      of RescanWifi:
+        ui.button(image, item, if view.connecting: "Connecting…" elif view.busy: "Checking…"
+          elif width < 500: "X: Scan" else: "X: Scan   A: Join")
+      else: ui.button(image, item, if view.connecting: "B: Cancel" else: "B: Back")
+    if view.networks.len == 0:
+      ui.label(image, if view.busy: "Looking for networks…" elif view.unavailable: "Wi-Fi manager not found"
+        else: "No networks found. Choose Scan.", 24, WifiListTop + 10, 17, p.muted)
+  of WifiConfirmPage:
+    ui.label(image, shortText("Join " & network.ssid & "?", max(10, (width - 48) div 13)),
+      24, 92, if width < 500: 21 else: 26, p.accent)
+    ui.label(image, if network.savedId >= 0: "Uses the profile saved on this device." else: "Open network; no password.",
+      24, 138, 16, p.muted)
+    ui.label(image, "Your current connection returns if this fails.", 24, 164, 15, p.muted)
+    for item in areas.targets:
+      ui.button(image, item, if item.action == ConnectWifi: "A: Connect" else: "B: Cancel",
+        item.action == ConnectWifi)
+  of WifiPasswordPage:
+    let area = keyboardArea(width, height)
+    view.keyboard.render(image, view.keyboard.keyboardLayout(area), ui.text.font,
+      keyboardTheme(p))
+  else: discard
+  if view.message.len > 0 and state.page != WifiPasswordPage:
+    ui.label(image, shortText(view.message, max(10, (width - 32) div 8)), 16, height - 20, 14,
+      if view.error: 0xc95138'u32 else: p.muted)
+
 proc renderLibrary*(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex,
     state: LibraryViewState, power: PowerStatus, width, height: int,
     detailsScreen: bool, systemLines: seq[string]): Image =
@@ -340,7 +501,10 @@ proc renderLibrary*(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex,
     areas = state.pageLayout(index, width, height)
   result = newCanvas(width, height)
   result.fill(p.background)
-  ui.toolbar(result, power, if state.theme == PocketTheme: "mono / pocket" else: "mono-retro")
+  ui.toolbar(result, power, if state.page == WifiPasswordPage and state.wifi.networks.len > 0:
+    shortText("Password: " & state.wifi.networks[clamp(state.wifi.selected, 0,
+      state.wifi.networks.high)].ssid, max(8, width div 22))
+    elif state.theme == PocketTheme: "mono / pocket" else: "mono-retro")
   if state.page == AppearancePage:
     var preview = state
     preview.theme = state.previewTheme
@@ -381,6 +545,8 @@ proc renderLibrary*(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex,
       for position, item in areas.targets:
         ui.button(result, item, ActionLabels[item.action], position == state.workbench)
       ui.label(result, "A: Open   Start: Menu   B: Games", 16, height - 52, 14, p.muted)
+  elif state.page in {SettingsPage, WifiPage, WifiConfirmPage, WifiPasswordPage}:
+    ui.drawWifi(result, state, areas, width, height, detailsScreen)
   elif detailsScreen or state.page == GamePage:
     ui.drawDetails(result, paths, game)
     if state.page == GamePage and not detailsScreen:
@@ -472,6 +638,7 @@ proc renderLibrary*(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex,
       "Both versions will be preserved.", 24, 144, 16, p.muted)
     for position, item in areas.targets:
       ui.button(result, item, ActionLabels[item.action], (position == 1) == state.confirmYes)
-  if state.message.len > 0 and state.page notin {PairPage, AppearancePage}:
+  if state.message.len > 0 and state.page notin {PairPage, AppearancePage, WifiPage,
+      WifiConfirmPage, WifiPasswordPage}:
     ui.label(result, shortText(state.message.splitLines()[0], max(10, (width - 32) div 8)),
       16, height - 20, 14, if state.error: 0xc95138'u32 else: p.muted)

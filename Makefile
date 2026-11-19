@@ -4,6 +4,10 @@ check:
 	nim check tests/test_gamelibrary.nim
 	nim check tests/test_rommclient.nim
 	nim check tests/test_libraryview.nim
+	nim check tests/test_touchkeyboard.nim
+	nim check tests/test_wifi.nim
+	nim check src/wificli.nim
+	nim check examples/touchkeyboard_demo.nim
 	nim check src/retro/systemvolume.nim
 	nim check src/retro/playerslots.nim
 	nim check tests/test_pausemenu.nim
@@ -37,6 +41,8 @@ test:
 	nim r -o:build/test-gamelibrary tests/test_gamelibrary.nim
 	nim r -o:build/test-rommclient tests/test_rommclient.nim
 	nim r -o:build/test-libraryview tests/test_libraryview.nim
+	nim r -o:build/test-touchkeyboard tests/test_touchkeyboard.nim
+	nim r -o:build/test-wifi tests/test_wifi.nim
 	nim r -o:build/test-shipping-profile tests/test_shipping_profile.nim
 	nim r tests/test_hardware.nim
 	nim r tests/test_gamepad.nim
@@ -84,9 +90,11 @@ library-handhelds:
 	mkdir -p build
 	MONO_RETRO_TARGET=arm64 nim c -o:build/mono-retro-library-arm64 src/librarycli.nim
 launcher-desktop: desktop library-desktop
+	nim c -o:build/mono-retro-wifi src/wificli.nim
 	MONO_RETRO_BACKENDS=x11 nim c -o:build/mono-retro src/launcher.nim
 	cp build/hwtest-desktop build/mono-retro-hwtest
 launcher-handhelds: handhelds library-handhelds
+	MONO_RETRO_TARGET=arm64 nim c -o:build/mono-retro-wifi-arm64 src/wificli.nim
 	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=fbdev,drm nim c -o:build/mono-retro-arm64 src/launcher.nim
 	cp build/hwtest-handhelds build/mono-retro-hwtest-arm64
 

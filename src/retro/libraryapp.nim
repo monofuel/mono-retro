@@ -1,9 +1,10 @@
 import
-  std/[json, monotimes, os, osproc, tempfiles, times],
+  std/[json, monotimes, os, osproc, streams, strutils, tempfiles, times, unicode],
   paddy, pixie, windy,
+  ../touchkeyboard,
   ./[anbernic, display, gamepad, gamelibrary, input, libraryview,
     menu, menuthemes, powercontrol, settings, systeminfo, systemvolume,
-    testerprocess, volumeui]
+    testerprocess, volumeui, wifi]
 
 type
   LibraryInput = enum
@@ -16,6 +17,9 @@ const
   StickThreshold = 0.6'f32
   StartupNetworkWaitSeconds = 60
   NetworkProbeIntervalMs = 3000
+  WifiStatusIntervalMs = 2000
+  WifiConnectTimeoutSeconds = 45
+  WifiPasswordLimit = 64
 
 proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     duration: int, stopping: proc(): bool, themeOverride = "") =
@@ -29,6 +33,9 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     helper = getAppDir() / "mono-retro-library"
     jobDirectory = createTempDir("mono-retro-library-", "")
     progressPath = jobDirectory / "progress.json"
+    wifiHelper = getAppDir() / "mono-retro-wifi"
+    wifiProgressPath = jobDirectory / "wifi-progress.json"
+    wifiResultPath = jobDirectory / "wifi-result.json"
     started = getMonoTime()
     preferencesPath = themePreferencesPath()
   createDir(jobDirectory)
@@ -59,6 +66,10 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     pendingTargets: seq[ViewTarget]
     job: Process
     jobKind: string
+    wifiJob: Process
+    wifiKind: string
+    keepWifiMessage: bool
+    wifiStatusAt = started
     pendingGame, offlineGame: string
     syncAfterScan = fileExists(paths.credentials)
     waitingForNetwork = false
@@ -88,7 +99,17 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       job = nil
     state.busy = false
 
+  proc stopWifiJob() =
+    ## Ask the Wi-Fi worker to stop; a connect restores the previous network first.
+    if wifiJob != nil and wifiJob.running(): wifiJob.terminate()
+
   defer:
+    if wifiJob != nil:
+      stopWifiJob()
+      if wifiJob.waitForExit(10000) == -1:
+        wifiJob.kill()
+        discard wifiJob.waitForExit()
+      wifiJob.close()
     cancelJob()
     closeScreens()
     if fileExists(progressPath): removeFile(progressPath)
@@ -97,6 +118,8 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
   proc startJob(command: string, extra: seq[string] = @[]) =
     ## Delegate network and scan work to the same CLI available to humans.
     if job != nil: raise newException(IOError, "Library operation is already running")
+    if wifiKind == "connect" and wifiJob != nil:
+      raise newException(IOError, "Wi-Fi is changing; try again when it finishes")
     if fileExists(progressPath): removeFile(progressPath)
     job = startProcess(helper, args = @[command, "--library:" & paths.root,
       "--config:" & paths.config, "--progress:" & progressPath,
@@ -105,6 +128,144 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     state.busy = true
     state.error = false
     state.message = "Working…"
+    dirty = true
+
+  proc startWifi(command: string, extra: seq[string] = @[], password = "") =
+    ## Run the Wi-Fi worker; a password travels only through its standard input.
+    if wifiJob != nil: return
+    if not fileExists(wifiHelper):
+      state.wifi.unavailable = true
+      state.wifi.error = true
+      state.wifi.message = "Wi-Fi settings are not installed on this device"
+      return
+    for path in [wifiProgressPath, wifiResultPath]:
+      if fileExists(path): removeFile(path)
+    wifiJob = startProcess(wifiHelper, args = @[command, "--progress:" & wifiProgressPath,
+      "--result:" & wifiResultPath] & extra, options = {})
+    let input = wifiJob.inputStream
+    if password.len > 0: input.write(password & "\n")
+    input.close()
+    wifiKind = command
+    state.wifi.busy = true
+    state.wifi.connecting = command == "connect"
+    state.wifi.error = false
+    state.wifi.message = if command == "connect": "Connecting…" else: "Checking Wi-Fi…"
+    dirty = true
+
+  proc finishWifi() =
+    ## Apply a finished worker's result to the view.
+    let code = wifiJob.waitForExit()
+    wifiJob.close()
+    wifiJob = nil
+    let
+      kind = wifiKind
+      keepMessage = keepWifiMessage
+    wifiKind = ""
+    keepWifiMessage = false
+    state.wifi.busy = false
+    state.wifi.connecting = false
+    dirty = true
+    var output: JsonNode
+    try: output = parseFile(wifiResultPath)
+    except CatchableError:
+      state.wifi.error = true
+      state.wifi.message = "Wi-Fi worker failed (code " & $code & ")"
+      return
+    if output.hasKey("error"):
+      if keepMessage and kind != "status": return
+      state.wifi.error = true
+      state.wifi.message = output["error"].getStr()
+      if "restore incomplete" in state.wifi.message:
+        state.wifi.message = "Recovery incomplete: " & state.wifi.message
+      if kind != "connect":
+        state.wifi.unavailable = "unavailable" in state.wifi.message
+        state.wifi.status.state = "UNKNOWN"
+        state.wifi.status.ipAddress = ""
+        return
+      if output{"cancelled"}.getBool():
+        state.wifi.message = if "restore incomplete" in state.wifi.message: state.wifi.message
+          else: "Cancelled; previous Wi-Fi configuration restored"
+    else:
+      state.wifi.unavailable = false
+      if not keepMessage: state.wifi.error = false
+      if output.hasKey("status"):
+        state.wifi.status = statusFromJson(output["status"])
+        for network in state.wifi.networks.mitems:
+          network.current = state.wifi.status.state == "COMPLETED" and
+            network.savedId >= 0 and network.savedId == state.wifi.status.networkId
+      if output.hasKey("networks"):
+        let selected = if state.wifi.networks.len > 0:
+          state.wifi.networks[clamp(state.wifi.selected, 0, state.wifi.networks.high)].ssidHex else: ""
+        state.wifi.networks.setLen(0)
+        for node in output["networks"]: state.wifi.networks.add networkFromJson(node)
+        state.wifi.selected = 0
+        for position, network in state.wifi.networks:
+          if network.ssidHex == selected: state.wifi.selected = position
+        if not keepMessage:
+          state.wifi.message = $state.wifi.networks.len & " networks" &
+            (if output{"fresh"}.getBool(): "" else: " (earlier scan results)")
+      if kind == "connect":
+        let readiness = output{"readiness"}.getStr()
+        state.wifi.message = (if readiness.len > 0: readiness & "; " else: "") &
+          "Connected to " & output["ssid"].getStr() & " (" & output["ipAddress"].getStr() & ")"
+        if fileExists(paths.credentials) and job == nil:
+          waitingForNetwork = true
+          networkProbeAt = getMonoTime()
+          networkDeadline = getMonoTime() + initDuration(seconds = StartupNetworkWaitSeconds)
+        let saveError = output{"saveError"}.getStr()
+        if saveError.len > 0:
+          state.wifi.message = saveError
+          state.wifi.error = true
+    if kind == "connect":
+      let message = state.wifi.message
+      let failed = state.wifi.error
+      startWifi("scan", @["--cached"])
+      keepWifiMessage = true
+      state.wifi.message = message
+      state.wifi.error = failed
+
+  proc beginWifiConnect(network: WifiNetwork, password: string) =
+    ## Start a human-requested connection without interrupting library storage work.
+    if job != nil and jobKind == "startup-probe":
+      cancelJob()
+      waitingForNetwork = false
+    if job != nil:
+      raise newException(IOError, "Wait for the current library operation before changing Wi-Fi")
+    if wifiKind == "connect": raise newException(IOError, "Wi-Fi is already connecting")
+    if wifiJob != nil:
+      raise newException(IOError, "Wi-Fi is still checking networks; wait for it to finish or use Back")
+    var arguments = @["--timeout:" & $WifiConnectTimeoutSeconds]
+    if network.savedId >= 0: arguments.add "--network:" & $network.savedId
+    else:
+      arguments.add ["--ssid-hex:" & network.ssidHex,
+        "--security:" & (if network.security == OpenSecurity: "open" else: "personal")]
+      if network.security == PersonalSecurity:
+        validatePassword(password)
+        arguments.add "--password-stdin"
+    startWifi("connect", arguments, password)
+    waitingForNetwork = false
+
+  proc keyboardLayout(): KeyboardLayout =
+    ## Lay out the password keyboard on the touch screen.
+    let last = screen.count() - 1
+    state.wifi.keyboard.keyboardLayout(keyboardArea(screen.width(last), screen.height(last)))
+
+  proc keyboardResult(outcome: KeyboardResult) =
+    ## Leave or submit the password page after a keyboard action.
+    case outcome
+    of KeyboardSubmitted:
+      let network = state.wifi.networks[clamp(state.wifi.selected, 0, state.wifi.networks.high)]
+      try:
+        beginWifiConnect(network, state.wifi.keyboard.text)
+        state.wifi.keyboard.clear()
+        state.page = WifiPage
+      except CatchableError as error:
+        state.wifi.message = error.msg
+        state.wifi.error = true
+    of KeyboardCancelled:
+      state.wifi.keyboard.clear()
+      state.page = WifiPage
+    else: discard
     dirty = true
 
   proc reload() =
@@ -118,6 +279,16 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
   proc pointer(phase: TouchPhase, point: Vec2, screenIndex: int, id = 0'i32) =
     ## Select covers on tap and require a separate Play action to launch.
     if screen.count() > 1 and screenIndex == 0: return
+    if state.page == WifiPasswordPage and screenIndex == screen.count() - 1:
+      if phase == TouchBegin and pointerId == -1:
+        pointerId = id
+        pointerScreen = screenIndex
+      elif phase in {TouchEnd, TouchCancel} and pointerId == id:
+        pointerId = -1
+        pointerScreen = -1
+        if phase == TouchEnd: keyboardResult(state.wifi.keyboard.tap(keyboardLayout(), point))
+        dirty = true
+      return
     if phase == TouchBegin:
       if pointerId != -1: return
       pointerId = id
@@ -152,6 +323,12 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       let target = screenIndex
       screen.window(screenIndex).onTouch = proc(event: TouchEvent) =
         pointer(event.phase, event.contact.position, target, event.contact.id)
+      screen.window(screenIndex).onRune = proc(rune: Rune) =
+        # The keyboard rejects invalid UTF-8 by raising, so drop invalid code points here.
+        let text = $rune
+        if state.page == WifiPasswordPage and text.validateUtf8() == -1 and
+            state.wifi.keyboard.insert(text) != KeyboardIgnored:
+          dirty = true
     if not desktop:
       for binding in settings.bindings:
         if binding.label == "BACK":
@@ -196,6 +373,32 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     of ShowGames: state.page = GamesPage
     of ShowTools: state.page = ToolsPage
     of ShowAppearance: state.beginAppearance()
+    of ShowSettings: state.page = SettingsPage
+    of ShowWifi:
+      state.page = WifiPage
+      startWifi("scan")
+    of RescanWifi: startWifi("scan")
+    of SelectWifiNetwork:
+      if item.index in 0 ..< state.wifi.networks.len and not state.wifi.connecting:
+        state.wifi.selected = item.index
+        let network = state.wifi.networks[item.index]
+        state.wifi.error = false
+        if network.security notin SupportedSecurity:
+          state.wifi.message = SecurityNames[network.security]
+          state.wifi.error = true
+        elif network.current:
+          state.wifi.message = "Already connected to " & network.ssid
+        elif network.savedId >= 0 or network.security == OpenSecurity:
+          state.page = WifiConfirmPage
+        else:
+          state.wifi.keyboard = newTouchKeyboard(label = "Password", submitLabel = "Connect",
+            maxRunes = WifiPasswordLimit, asciiOnly = true)
+          state.page = WifiPasswordPage
+    of ConnectWifi:
+      if state.wifi.networks.len > 0:
+        state.page = WifiPage
+        beginWifiConnect(state.wifi.networks[clamp(state.wifi.selected, 0, state.wifi.networks.high)], "")
+    of CancelWifi: state.page = WifiPage
     of SelectTheme: state.previewTheme = MenuTheme(item.index)
     of ApplyTheme: state.applyAppearance(preferencesPath)
     of CancelAppearance: state.cancelAppearance()
@@ -207,6 +410,8 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       state.filter = (state.filter + count + (if item.action == NextFilter: 1 else: -1)) mod count
       state.selected = 0
     else:
+      if item.action in {PlayGame, TestHardware} and wifiKind == "connect":
+        raise newException(IOError, "Wait for Wi-Fi to finish connecting")
       if item.action == PlayGame and jobKind == "startup-probe":
         cancelJob()
         waitingForNetwork = false
@@ -341,7 +546,26 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
         dirty = true
         state.transition = 0
         transitionStarted = getMonoTime()
-    if waitingForNetwork and job == nil and getMonoTime() >= networkProbeAt:
+    if wifiJob != nil:
+      if fileExists(wifiProgressPath):
+        try:
+          let message = parseFile(wifiProgressPath).stringField("message")
+          if message.len > 0 and message != state.wifi.message:
+            state.wifi.message = message
+            dirty = true
+        except CatchableError: discard
+      if not wifiJob.running(): finishWifi()
+    if state.page == WifiPage and wifiJob == nil and not state.wifi.unavailable and
+        getMonoTime() >= wifiStatusAt:
+      let
+        message = state.wifi.message
+        failed = state.wifi.error
+      startWifi("status")
+      keepWifiMessage = true
+      state.wifi.message = message
+      state.wifi.error = failed
+      wifiStatusAt = getMonoTime() + initDuration(milliseconds = WifiStatusIntervalMs)
+    if waitingForNetwork and job == nil and wifiKind != "connect" and getMonoTime() >= networkProbeAt:
       startJob("probe")
       jobKind = "startup-probe"
     if volume != nil:
@@ -391,11 +615,18 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       for screenIndex in 0 ..< screen.count():
         let window = screen.window(screenIndex)
         activationHeld = activationHeld or window.buttonDown[KeyEnter] or window.buttonDown[MouseLeft]
-        for (key, action) in [(KeyUp, MoveUp), (KeyDown, MoveDown), (KeyLeft, MoveLeft),
-            (KeyRight, MoveRight), (KeyEnter, OpenGame), (KeyEscape, GoBack),
-            (KeyX, Details), (KeyY, Favourite), (KeyTab, OpenTools),
-            (KeyQ, PreviousFilter), (KeyE, NextFilter)]:
-          if window.buttonPressed[key]: pending.add action
+        if state.page == WifiPasswordPage:
+          # Letter keys type through onRune, so only editing keys map to actions here.
+          if window.buttonPressed[KeyBackspace]: discard state.wifi.keyboard.backspace(); dirty = true
+          for (key, action) in [(KeyUp, MoveUp), (KeyDown, MoveDown), (KeyLeft, PreviousFilter),
+              (KeyRight, NextFilter), (KeyEnter, OpenTools), (KeyEscape, GoBack)]:
+            if window.buttonPressed[key]: pending.add action
+        else:
+          for (key, action) in [(KeyUp, MoveUp), (KeyDown, MoveDown), (KeyLeft, MoveLeft),
+              (KeyRight, MoveRight), (KeyEnter, OpenGame), (KeyEscape, GoBack),
+              (KeyX, Details), (KeyY, Favourite), (KeyTab, OpenTools),
+              (KeyQ, PreviousFilter), (KeyE, NextFilter)]:
+            if window.buttonPressed[key]: pending.add action
         if window.buttonPressed[MouseLeft]:
           pointer(TouchBegin, window.mousePos.vec2, screenIndex)
           mouseHeld = true
@@ -408,6 +639,41 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     if not activationHeld: armed = true
     for action in pending:
       try:
+        if state.page == WifiPasswordPage and action != ActivateTarget:
+          let layout = keyboardLayout()
+          case action
+          of MoveUp, MoveDown, MoveLeft, MoveRight:
+            discard state.wifi.keyboard.moveFocus(layout,
+              (if action == MoveLeft: -1 elif action == MoveRight: 1 else: 0),
+              (if action == MoveUp: -1 elif action == MoveDown: 1 else: 0))
+          of OpenGame:
+            if armed:
+              armed = false
+              keyboardResult(state.wifi.keyboard.activateFocused(layout))
+          of GoBack: keyboardResult(KeyboardCancelled)
+          of Details: discard state.wifi.keyboard.backspace()
+          of Favourite: discard state.wifi.keyboard.pressAction(ShiftKey)
+          of OpenTools: keyboardResult(KeyboardSubmitted)
+          of PreviousFilter: discard state.wifi.keyboard.moveCursor(-1)
+          of NextFilter: discard state.wifi.keyboard.moveCursor(1)
+          else: discard
+          dirty = true
+          continue
+        if action == GoBack and state.page in {SettingsPage, WifiPage, WifiConfirmPage}:
+          if state.page == WifiConfirmPage: state.page = WifiPage
+          elif state.page == WifiPage and wifiKind == "connect":
+            stopWifiJob()
+            state.wifi.message = "Cancelling; restoring the previous connection…"
+          elif state.page == WifiPage:
+            stopWifiJob()
+            state.page = SettingsPage
+          else: state.page = state.theme.homePage()
+          dirty = true
+          continue
+        if action == Details and state.page == WifiPage:
+          startWifi("scan")
+          dirty = true
+          continue
         if action == GoBack:
           if state.page == AppearancePage:
             state.cancelAppearance()

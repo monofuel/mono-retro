@@ -106,6 +106,8 @@ make check test test-player
 
 - [Game library](docs/library.md): cover browsing, card-backed saves and RomM pairing/sync.
 - [Menu themes](docs/menu-themes.md): preview and switch Library, Showcase, Pocket and Workbench in the app.
+- [Wi-Fi settings](docs/wifi-settings.md): choose a network and enter its password on the handheld.
+- [Touchscreen keyboard](docs/touchkeyboard.md): reuse the Nim/Pixie component in another app.
 - [Menu styling](docs/menu-styling.md): ideas for future themes, layouts and browsing.
 - [Player](README-player.md): cores, controls, saves, state imports and DS layouts.
 - [Launcher](docs/launcher.md): navigation, battery status and handheld installation.

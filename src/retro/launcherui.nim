@@ -34,6 +34,10 @@ proc newLauncherUi*(): LauncherUi =
   ## Parse the embedded, licensed font once for the lifetime of the UI.
   LauncherUi(font: newFont(parseTtf(FontBytes)))
 
+proc font*(ui: LauncherUi): Font =
+  ## Share the embedded font with components that render their own text.
+  ui.font
+
 proc contains*(area: UiRect, point: Vec2): bool =
   ## Hit-test using the same rectangles used to render controls.
   point.x >= area.x.float32 and point.y >= area.y.float32 and

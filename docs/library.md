@@ -17,6 +17,30 @@ build/mono-retro --library:/path/to/games --config:/path/to/library.json
 Both executables and `mono-retro-library` must be installed together. Without
 `--library`, the launcher retains its diagnostic menu and explicit test wrappers.
 
+## Wi-Fi settings
+
+Menu → Settings → Wi-Fi lists nearby networks and the current connection. Saved
+and open networks join after a Connect confirmation; new WPA/WPA2 Personal
+networks ask for a password on the lower-screen keyboard, masked unless Show is
+chosen. B cancels a connection in progress and returns to the previous network.
+
+Wi-Fi uses the running wpa_supplicant through `mono-retro-wifi`, installed beside
+the launcher. The worker needs access to the daemon's control socket
+(`/run/wpa_supplicant/wlan0` by default); connecting requires wpa_supplicant 2.0
+or newer. A new network is added to the daemon's `-c` configuration only after it
+is authorized, has an address and stays selected. The file is replaced atomically
+with a copy that keeps the existing contents and adds the profile, storing the
+derived WPA key rather than the password. It must be a root-owned regular file
+with mode 0600. The address shown is the interface address; it does not prove
+Internet access. Without the worker or daemon, the page reports Wi-Fi as
+unavailable. Enterprise, WEP, Enhanced Open and WPA3-only networks are listed but
+not joined.
+
+```sh
+mono-retro-wifi status
+mono-retro-wifi scan --cached
+```
+
 The library directory contains `Roms/` and the `mono-retro/` data folders
 described in [storage](storage.md). Desktop configuration can omit the card UUID:
 

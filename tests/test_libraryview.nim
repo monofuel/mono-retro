@@ -1,7 +1,58 @@
 import
-  std/[os, tempfiles],
+  std/[os, strutils, tempfiles],
   pixie,
-  retro/[gamelibrary, launcherui, libraryview, menuthemes, pattern, systeminfo]
+  touchkeyboard,
+  retro/[gamelibrary, launcherui, libraryview, menuthemes, pattern, systeminfo, wifi]
+
+proc testWifiPages(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex, power: PowerStatus) =
+  ## Render Settings and Wi-Fi pages in every theme with shared touch targets.
+  doAssert ShowSettings in ToolActions and ShowSettings in WorkbenchActions
+  var wifi = WifiView(status: WifiStatus(state: "COMPLETED", ssid: "Home", ipAddress: "192.0.2.10",
+    networkId: 0), message: "Connecting to ☕ café")
+  for number, (name, security, saved) in [("Home", PersonalSecurity, 0), ("☕ café", PersonalSecurity, -1),
+      ("Library guest", OpenSecurity, -1), ("Office", EnterpriseSecurity, -1),
+      ("A network name that is exactly long", Wpa3OnlySecurity, -1), ("Six", PersonalSecurity, -1),
+      ("Seven", OpenSecurity, -1), ("Eight", PersonalSecurity, -1)]:
+    wifi.networks.add WifiNetwork(ssid: name, ssidHex: name.ssidToHex(), signal: -40 - number * 6,
+      frequency: if number mod 2 == 0: 2412 else: 5180, security: security, savedId: saved,
+      current: number == 0)
+  wifi.selected = 1
+  wifi.keyboard = newTouchKeyboard("hunter22", label = "Password", submitLabel = "Connect")
+  for theme in MenuTheme:
+    for page in [SettingsPage, WifiPage, WifiConfirmPage, WifiPasswordPage]:
+      var state = LibraryViewState(page: page, theme: theme, previewTheme: theme, transition: 1, wifi: wifi)
+      for dimensions in [(640, 480), (720, 480), (320, 240), (1024, 768)]:
+        let layout = state.pageLayout(index, dimensions[0], dimensions[1])
+        for item in layout.targets:
+          let area = item.area
+          doAssert area.x >= 0 and area.y >= 0 and area.width > 0 and area.height > 0
+          doAssert area.x + area.width <= dimensions[0] and area.y + area.height <= dimensions[1]
+          doAssert layout.hitTarget(vec2((area.x + area.width div 2).float32,
+            (area.y + area.height div 2).float32)).action == item.action
+        if page == WifiPage and dimensions[1] >= 480:
+          doAssert layout.hitTarget(vec2(30, 150 + 43 + 10)).index == 1
+        for top in [false, true]:
+          discard ui.renderLibrary(paths, index, state, power, dimensions[0], dimensions[1], top, @[])
+      let
+        top = ui.renderLibrary(paths, index, state, power, 640, 480, true, @[])
+        bottom = ui.renderLibrary(paths, index, state, power, 640, 480, false, @[])
+        pair = newCanvas(640, 968)
+      pair.fill(0x030609'u32)
+      pair.draw(top)
+      pair.draw(bottom, translate(vec2(0, 488)))
+      pair.writeFile("build/wifi-" & ThemeKeys[theme] & "-" & ($page).toLowerAscii() & ".png")
+  var state = LibraryViewState(page: SettingsPage, theme: LibraryTheme, wifi: wifi)
+  doAssert state.selectedTarget().action == ShowWifi
+  state.moveSelection(index, 640, 480, 1, true)
+  doAssert state.selectedTarget().action == ShowAppearance
+  state.page = WifiPage
+  state.moveSelection(index, 640, 480, 1, true)
+  doAssert state.selectedTarget().action == SelectWifiNetwork and state.selectedTarget().index == 2
+  state.wifi.networks.setLen(0)
+  doAssert state.selectedTarget().action == RescanWifi
+  let area = keyboardArea(640, 480)
+  doAssert area.y >= 64 and area.y + area.h <= 480
+  for key in wifi.keyboard.keyboardLayout(area).keys: doAssert key.area.h >= 50
 
 proc main() =
   ## Render every library page at handheld sizes without opening a display.
@@ -110,5 +161,6 @@ proc main() =
     text.label(gallery, ThemeNames[theme], x + 16, y + 6, 18)
     gallery.draw(bottom, translate(vec2(x.float32, (y + 32).float32)))
   gallery.writeFile("build/theme-gallery.png")
+  testWifiPages(ui, paths, index, power)
 
 main()
