@@ -43,6 +43,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
   var
     state: LibraryViewState
     index: LibraryIndex
+    storedIndex: LibraryIndex
     screen: Display
     volume: SystemVolume
     volumeUi = newVolumeUi()
@@ -271,7 +272,8 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
   proc reload() =
     ## Read a complete snapshot only after a writer has published it.
     paths.requireStorage(config)
-    index = paths.loadIndex()
+    storedIndex = paths.loadIndex()
+    index = storedIndex.withApplications(config)
     ui.clearCovers()
     state.filter = clamp(state.filter, 0, index.filters().high)
     state.selected = clamp(state.selected, 0, max(0, index.visibleGames(state.filter).high))
@@ -346,7 +348,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     var lock = paths.lockLibrary(config)
     defer: lock.close()
     var game: LibraryGame
-    for candidate in index.games:
+    for candidate in storedIndex.games:
       if candidate.hash == hash: game = candidate; break
     if game == nil: raise newException(IOError, "Game is no longer in the library")
     let arguments = paths.gameArguments(config, game)
@@ -360,7 +362,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       if not stopping(): openScreens()
     if stopping(): return
     game.lastPlayed = getTime().toUnix
-    paths.saveIndex(index)
+    paths.saveIndex(storedIndex)
     lock.close()
     if fileExists(paths.credentials): startJob("sync")
 
@@ -424,7 +426,9 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
         let games = index.visibleGames(state.filter)
         if games.len > 0:
           let hash = games[state.selected].hash
-          if games[state.selected].saveConflict:
+          if hash == GrimoireApplicationHash:
+            activate(ViewTarget(action: OpenGrimoire))
+          elif games[state.selected].saveConflict:
             state.page = ConflictPage
             state.confirmYes = false
           elif fileExists(paths.credentials) and offlineGame != hash:
@@ -725,7 +729,8 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
         elif not armed: discard
         elif action == Favourite:
           let games = index.visibleGames(state.filter)
-          if not state.busy and state.page in {GamesPage, GamePage} and games.len > 0:
+          if not state.busy and state.page in {GamesPage, GamePage} and games.len > 0 and
+              games[state.selected].hash != GrimoireApplicationHash:
             startJob("favourite", @["--game:" & games[state.selected].hash])
         elif action == Details:
           if state.page in {GamesPage, GamePage}: state.page = GamePage

@@ -1,7 +1,7 @@
 import
   std/[json, jsonutils, monotimes, os, osproc, strutils, tempfiles, times],
   windy/platforms/linux/x11/[x, xevent, xlib],
-  retro/[gamelibrary, libraryview, menuthemes]
+  retro/[gamelibrary, menuthemes]
 
 proc queryTree(d: Display, window: Window, root, parent: ptr Window,
     children: ptr ptr UncheckedArray[Window], count: ptr cuint): cint
@@ -217,7 +217,7 @@ proc main() =
   press(display, window, 0xff1b)
   doAssert recovering.waitForExit(5000) == 0
 
-  # Menu → Grimoire passes argv without a shell, reopens fresh windows after success
+  # The main Grimoire card passes argv without a shell, reopens fresh windows after success
   # and failure, and neither syncs nor touches the library index.
   let
     grimoire = runtime / "grimoire fixture"
@@ -242,14 +242,11 @@ proc main() =
     if launcher.running(): launcher.terminate()
     discard launcher.waitForExit(5000)
     launcher.close()
-  window = findWindow(display, 0)
   doAssert waitForFile(synced, 10)
   sleep(500)
+  window = findWindow(display, 0)
   removeFile(synced)
   let indexBefore = readFile(paths.index)
-  press(display, window, 0xff09)
-  for attempt in 0 ..< ToolActions.len: press(display, window, 0xff52)
-  for attempt in 0 ..< ToolActions.len: press(display, window, 0xff54)
   for code in [0, 3]:
     writeFile(grimoireExit, $code)
     press(display, window, 0xff0d)
@@ -261,7 +258,6 @@ proc main() =
     sleep(300)
   doAssert not fileExists(synced)
   doAssert readFile(paths.index) == indexBefore
-  press(display, window, 0xff1b)
   press(display, window, 0xff1b)
   doAssert launcher.waitForExit(5000) == 0
 

@@ -10,7 +10,7 @@ type
   LibraryConfig* = object
     expectedUuid*, rommUrl*, playerPath*: string
     cores*: seq[CoreConfig]
-    grimoireCommand*: seq[string] ## Optional argv for Menu → Grimoire; empty leaves it unconfigured.
+    grimoireCommand*: seq[string] ## Optional argv for the Grimoire app card.
   LibraryGame* = ref object
     hash*, path*, title*, platform*, core*, cover*, coverSource*, summary*: string
     rommId*: int

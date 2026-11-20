@@ -48,13 +48,13 @@ type
 
 const
   MaximumCovers = 24
+  GrimoireApplicationHash* = "app:grimoire"
   CoverWidth = 360
   CoverHeight = 480
   MaximumCoverPixels = 4_000_000
   WorkbenchFooterHeight = 64
   ToolActions* = [TestHardware, ShowSystem, ShowAppearance, ShowSettings, ShowCollections,
-    ConnectRomm, SyncRomm, DisconnectRomm, RebootDevice, ShutdownDevice, RescanGames,
-    OpenGrimoire]
+    ConnectRomm, SyncRomm, DisconnectRomm, RebootDevice, ShutdownDevice, RescanGames]
   WorkbenchActions* = [TestHardware, ShowSystem, ShowGames, SyncRomm, ShowAppearance,
     ShowSettings, ShowTools]
   SettingsActions* = [ShowWifi, ShowAppearance]
@@ -95,6 +95,15 @@ proc filters*(index: LibraryIndex): seq[string] =
     let label = game.platform.toUpperAscii()
     if label notin result: result.add label
   if result.len > 3: result[3 .. ^1] = result[3 .. ^1].sorted()
+
+proc withApplications*(index: LibraryIndex, config: LibraryConfig): LibraryIndex =
+  ## Present installed apps as launch cards without putting them in the ROM index.
+  result = index
+  result.games = @[]
+  if config.grimoireCommand.len > 0:
+    result.games.add LibraryGame(hash: GrimoireApplicationHash, title: "Grimoire",
+      platform: "app", core: "Grimoire", summary: "Voice and touch ACP client.")
+  result.games.add index.games
 
 proc visibleGames*(index: LibraryIndex, filter: int): seq[LibraryGame] =
   ## Return shared game identities in the current view's presentation order.
@@ -361,7 +370,8 @@ proc drawDetails(ui: LibraryUi, image: Image, paths: LibraryPaths, game: Library
       y += titleSize + 5
   for line in [game.platform.toUpperAscii(),
       if game.core.len > 0: game.core else: "No emulator configured",
-      if game.favourite: "Favourite" else: "Y: Add favourite"]:
+      if game.hash == GrimoireApplicationHash: "Application"
+      elif game.favourite: "Favourite" else: "Y: Add favourite"]:
     if y < height - 80:
       ui.label(image, shortText(line, max(8, textWidth div 9)), left, y, 16, ui.palette.accent)
       y += 26
@@ -552,7 +562,10 @@ proc renderLibrary*(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex,
   elif detailsScreen or state.page == GamePage:
     ui.drawDetails(result, paths, game)
     if state.page == GamePage and not detailsScreen:
-      for item in areas.targets: ui.button(result, item, if item.action == PlayGame: "A: Play" else: "B: Back")
+      for item in areas.targets:
+        ui.button(result, item, if item.action != PlayGame: "B: Back"
+          elif game != nil and game.hash == GrimoireApplicationHash: "A: Open"
+          else: "A: Play")
   elif state.page == GamesPage:
     let
       choices = index.filters()
@@ -604,7 +617,9 @@ proc renderLibrary*(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex,
         ui.label(result, "★", area.x + area.width - 25, area.y + 10, 18, p.accent)
     for item in areas.targets:
       if item.action == PlayGame:
-        ui.button(result, item, if state.busy: "Working…" elif width < 500: "A: Play" else: "A: Play   X: Details")
+        ui.button(result, item, if state.busy: "Working…"
+          elif game != nil and game.hash == GrimoireApplicationHash: "A: Open"
+          elif width < 500: "A: Play" else: "A: Play   X: Details")
       elif item.action == ShowTools:
         ui.button(result, item, if width < 500: "Start: Menu" else: "Start: Menu   Y: Favourite")
     if games.len == 0: ui.label(result, "No games in this view", 24, height div 2, 20, p.muted)

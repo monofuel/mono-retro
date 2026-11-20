@@ -43,13 +43,16 @@ mono-retro-wifi scan --cached
 
 ## Grimoire
 
-Menu → Grimoire (last entry) runs the separately installed Grimoire app. Set
+The Grimoire card on the main launch screen, alongside games such as Decompbound,
+runs the separately installed Grimoire app. Set
 its exact argv in the library configuration; it runs without a shell:
 
 ```json
 "grimoireCommand": ["/usr/local/bin/grimoire", "--config:/home/monofuel/.config/grimoire/config.json"]
 ```
 
+The card uses each theme's normal presentation and controller/touch navigation;
+it is not a Settings or tools entry. It stays out of the ROM index and save sync.
 The launcher releases its displays and input like Hardware Test, waits for the
 command to exit and reopens the menu. A nonzero exit is shown as an error; saves,
 play history and RomM sync are left alone. Without `grimoireCommand`, or while a
