@@ -1,7 +1,7 @@
 import
   std/[json, jsonutils, monotimes, os, osproc, strutils, tempfiles, times],
   windy/platforms/linux/x11/[x, xevent, xlib],
-  retro/[gamelibrary, menuthemes]
+  retro/[gamelibrary, libraryview, menuthemes]
 
 proc queryTree(d: Display, window: Window, root, parent: ptr Window,
     children: ptr ptr UncheckedArray[Window], count: ptr cuint): cint
@@ -34,6 +34,12 @@ proc findWindow(display: Display, previous: Window): Window =
       if children != nil: XFree(children)
     sleep(10)
   raise newException(IOError, "Library window did not appear")
+
+proc waitForFile(path: string, seconds = 5): bool =
+  ## Poll for a marker written by a fixture process.
+  let deadline = getMonoTime() + initDuration(seconds = seconds)
+  while not fileExists(path) and getMonoTime() < deadline: sleep(10)
+  fileExists(path)
 
 proc press(display: Display, window: Window, symbol: culong) =
   ## Deliver keyboard transitions to the isolated X11 server only.
@@ -210,5 +216,53 @@ proc main() =
   press(display, window, 0xff1b)
   press(display, window, 0xff1b)
   doAssert recovering.waitForExit(5000) == 0
+
+  # Menu → Grimoire passes argv without a shell, reopens fresh windows after success
+  # and failure, and neither syncs nor touches the library index.
+  let
+    grimoire = runtime / "grimoire fixture"
+    grimoireArguments = root / "grimoire-arguments"
+    grimoireStarted = root / "grimoire-started"
+    grimoireRelease = root / "grimoire-release"
+    grimoireExit = root / "grimoire-exit"
+    grimoireConfig = "--config:" & root / "grimoire config.json"
+  writeFile(grimoire, "#!/bin/sh\nprintf '%s\\n' \"$@\" > " & quoteShell(grimoireArguments) & "\n" &
+    "touch " & quoteShell(grimoireStarted) & "\ni=0\n" &
+    "while test ! -f " & quoteShell(grimoireRelease) & " && test $i -lt 200; do sleep 0.05; i=$((i + 1)); done\n" &
+    "rm -f " & quoteShell(grimoireRelease) & " " & quoteShell(grimoireStarted) & "\n" &
+    "exit $(cat " & quoteShell(grimoireExit) & ")\n")
+  setFilePermissions(grimoire, {fpUserRead, fpUserWrite, fpUserExec})
+  var grimoireLibrary = config
+  grimoireLibrary.grimoireCommand = @[grimoire, grimoireConfig]
+  writeFile(configPath, $grimoireLibrary.toJson())
+  removeFile(synced)
+  let launcher = startProcess(runtime / "mono-retro", args = @[
+    "--library:" & root, "--config:" & configPath, "--seconds:30"], options = {poParentStreams})
+  defer:
+    if launcher.running(): launcher.terminate()
+    discard launcher.waitForExit(5000)
+    launcher.close()
+  window = findWindow(display, 0)
+  doAssert waitForFile(synced, 10)
+  sleep(500)
+  removeFile(synced)
+  let indexBefore = readFile(paths.index)
+  press(display, window, 0xff09)
+  for attempt in 0 ..< ToolActions.len: press(display, window, 0xff52)
+  for attempt in 0 ..< ToolActions.len: press(display, window, 0xff54)
+  for code in [0, 3]:
+    writeFile(grimoireExit, $code)
+    press(display, window, 0xff0d)
+    doAssert waitForFile(grimoireStarted)
+    doAssert readFile(grimoireArguments) == grimoireConfig & "\n"
+    writeFile(grimoireRelease, "")
+    window = findWindow(display, window)
+    doAssert launcher.running()
+    sleep(300)
+  doAssert not fileExists(synced)
+  doAssert readFile(paths.index) == indexBefore
+  press(display, window, 0xff1b)
+  press(display, window, 0xff1b)
+  doAssert launcher.waitForExit(5000) == 0
 
 main()

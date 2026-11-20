@@ -41,6 +41,24 @@ mono-retro-wifi status
 mono-retro-wifi scan --cached
 ```
 
+## Grimoire
+
+Menu → Grimoire (last entry) runs the separately installed Grimoire app. Set
+its exact argv in the library configuration; it runs without a shell:
+
+```json
+"grimoireCommand": ["/usr/local/bin/grimoire", "--config:/home/monofuel/.config/grimoire/config.json"]
+```
+
+The launcher releases its displays and input like Hardware Test, waits for the
+command to exit and reopens the menu. A nonzero exit is shown as an error; saves,
+play history and RomM sync are left alone. Without `grimoireCommand`, or while a
+library operation or Wi-Fi connection is in progress, the entry reports why it
+cannot start. The command must be one that exits by itself and does not stop or
+restart the mono-retro service, so Grimoire's own session wrapper is not suitable.
+The launcher provides no agent transport: a host agent over ACP is reachable
+from this entry only if Grimoire's own configuration supplies that connection.
+
 The library directory contains `Roms/` and the `mono-retro/` data folders
 described in [storage](storage.md). Desktop configuration can omit the card UUID:
 

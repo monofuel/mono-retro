@@ -15,7 +15,8 @@ type
     RebootDevice, ShutdownDevice, RescanGames, ShowAppearance, SelectTheme,
     ApplyTheme, CancelAppearance, PreviousFilter, NextFilter, ToggleCollection,
     CancelDialog, ConfirmPower, UseLocalSave, UseRemoteSave, SelectFilter,
-    ShowSettings, ShowWifi, SelectWifiNetwork, RescanWifi, ConnectWifi, CancelWifi
+    ShowSettings, ShowWifi, SelectWifiNetwork, RescanWifi, ConnectWifi, CancelWifi,
+    OpenGrimoire
   ViewTarget* = object
     area*: UiRect
     action*: ViewAction
@@ -52,7 +53,8 @@ const
   MaximumCoverPixels = 4_000_000
   WorkbenchFooterHeight = 64
   ToolActions* = [TestHardware, ShowSystem, ShowAppearance, ShowSettings, ShowCollections,
-    ConnectRomm, SyncRomm, DisconnectRomm, RebootDevice, ShutdownDevice, RescanGames]
+    ConnectRomm, SyncRomm, DisconnectRomm, RebootDevice, ShutdownDevice, RescanGames,
+    OpenGrimoire]
   WorkbenchActions* = [TestHardware, ShowSystem, ShowGames, SyncRomm, ShowAppearance,
     ShowSettings, ShowTools]
   SettingsActions* = [ShowWifi, ShowAppearance]
@@ -65,7 +67,7 @@ const
     "Sync now", "Disconnect RomM", "Reboot", "Shut down", "Rescan games",
     "Appearance", "", "Apply", "Cancel", "Previous filter", "Next filter", "",
     "Cancel", "Confirm", "Local save", "RomM save", "", "Settings", "Wi-Fi", "",
-    "Scan", "Connect", "Cancel"]
+    "Scan", "Connect", "Cancel", "Grimoire"]
   DefaultText = 0xffffffff'u32
 
 proc newLibraryUi*(): LibraryUi =

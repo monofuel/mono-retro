@@ -54,6 +54,28 @@ proc testWifiPages(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex, powe
   doAssert area.y >= 64 and area.y + area.h <= 480
   for key in wifi.keyboard.keyboardLayout(area).keys: doAssert key.area.h >= 50
 
+proc testGrimoireTool(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex, power: PowerStatus) =
+  ## Reach the Grimoire entry by controller and touch without moving existing tools.
+  doAssert ToolActions[2] == ShowAppearance and ToolActions[3] == ShowSettings
+  doAssert ToolActions[^1] == OpenGrimoire and ActionLabels[OpenGrimoire] == "Grimoire"
+  for theme in MenuTheme:
+    var state = LibraryViewState(page: ToolsPage, theme: theme, transition: 1)
+    for step in 0 ..< ToolActions.len: state.moveSelection(index, 640, 480, 1, true)
+    doAssert state.selectedTarget().action == OpenGrimoire
+    doAssert state.selectedTarget().index == ToolActions.high
+    for dimensions in [(640, 480), (720, 480), (320, 240), (1024, 768)]:
+      let layout = state.pageLayout(index, dimensions[0], dimensions[1])
+      var found = false
+      for item in layout.targets:
+        if item.action == OpenGrimoire:
+          found = true
+          let hit = layout.hitTarget(vec2((item.area.x + item.area.width div 2).float32,
+            (item.area.y + item.area.height div 2).float32))
+          doAssert hit.action == OpenGrimoire and hit.index == ToolActions.high
+      doAssert found
+    ui.renderLibrary(paths, index, state, power, 640, 480, false, @[]).writeFile(
+      "build/tools-grimoire-" & ThemeKeys[theme] & ".png")
+
 proc main() =
   ## Render every library page at handheld sizes without opening a display.
   let
@@ -162,5 +184,6 @@ proc main() =
     gallery.draw(bottom, translate(vec2(x.float32, (y + 32).float32)))
   gallery.writeFile("build/theme-gallery.png")
   testWifiPages(ui, paths, index, power)
+  testGrimoireTool(ui, paths, index, power)
 
 main()

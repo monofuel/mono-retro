@@ -410,11 +410,13 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       state.filter = (state.filter + count + (if item.action == NextFilter: 1 else: -1)) mod count
       state.selected = 0
     else:
-      if item.action in {PlayGame, TestHardware} and wifiKind == "connect":
+      if item.action in {PlayGame, TestHardware, OpenGrimoire} and wifiKind == "connect":
         raise newException(IOError, "Wait for Wi-Fi to finish connecting")
-      if item.action == PlayGame and jobKind == "startup-probe":
+      if item.action in {PlayGame, OpenGrimoire} and jobKind == "startup-probe":
         cancelJob()
         waitingForNetwork = false
+      if item.action == OpenGrimoire and state.busy:
+        raise newException(IOError, "Wait for the current library operation before opening Grimoire")
       if state.busy: return
       waitingForNetwork = false
       case item.action
@@ -437,6 +439,20 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
           discard runTester(getAppDir() / "mono-retro-hwtest", @["test", "--seconds:3600"] & displayArguments, stopping)
         finally:
           if not stopping(): openScreens()
+      of OpenGrimoire:
+        if config.grimoireCommand.len == 0:
+          raise newException(IOError, "Grimoire is not configured; set grimoireCommand in the library configuration")
+        if not fileExists(config.grimoireCommand[0]):
+          raise newException(IOError, "Grimoire is not installed at " & config.grimoireCommand[0])
+        closeScreens()
+        var code: int
+        try:
+          code = runTester(config.grimoireCommand[0], config.grimoireCommand[1 .. ^1], stopping)
+        finally:
+          if not stopping(): openScreens()
+        if code != 0: raise newException(IOError, "Grimoire exited with code " & $code)
+        state.message = ""
+        state.error = false
       of ShowSystem: state.page = SystemPage
       of ShowCollections:
         state.page = CollectionsPage
