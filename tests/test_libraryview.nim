@@ -64,6 +64,14 @@ proc testGrimoireApp(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex, po
   doAssert index.games.len == originalCount
   doAssert presented.games.len == originalCount + 1
   doAssert presented.visibleGames(0)[0].hash == GrimoireApplicationHash
+  doAssert paths.coverPath(presented.games[0]) == "/usr/local/share/grimoire/cover.png"
+  doAssert paths.coverPath(index.games[0]) == paths.root.inside(index.games[0].cover)
+  var rejectedAbsoluteCover = false
+  try:
+    discard paths.coverPath(LibraryGame(hash: "ordinary-game", cover: "/outside/card.png"))
+  except ValueError:
+    rejectedAbsoluteCover = true
+  doAssert rejectedAbsoluteCover
   doAssert index.withApplications(LibraryConfig()).games.len == originalCount
   for theme in MenuTheme:
     let state = LibraryViewState(page: GamesPage, theme: theme, transition: 1)

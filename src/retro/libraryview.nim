@@ -49,6 +49,7 @@ type
 const
   MaximumCovers = 24
   GrimoireApplicationHash* = "app:grimoire"
+  GrimoireCoverPath = "/usr/local/share/grimoire/cover.png"
   CoverWidth = 360
   CoverHeight = 480
   MaximumCoverPixels = 4_000_000
@@ -279,11 +280,16 @@ proc applyAppearance*(state: var LibraryViewState, path: string) =
   state.theme = state.previewTheme
   state.page = state.theme.homePage()
 
+proc coverPath*(paths: LibraryPaths, game: LibraryGame): string =
+  ## Resolve the installed app asset separately from card-relative game artwork.
+  if game.hash == GrimoireApplicationHash: GrimoireCoverPath
+  elif game.cover.len > 0: paths.root.inside(game.cover)
+  else: ""
+
 proc cover(ui: LibraryUi, paths: LibraryPaths, game: LibraryGame): Image =
   ## Decode once and cap both source dimensions and the number of cached covers.
-  if game.cover.len == 0: return
-  let path = paths.root.inside(game.cover)
-  if not fileExists(path): return
+  let path = paths.coverPath(game)
+  if path.len == 0 or not fileExists(path): return
   if path notin ui.covers:
     if ui.covers.len >= MaximumCovers: ui.covers.clear()
     ui.covers[path] = nil
