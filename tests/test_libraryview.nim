@@ -100,6 +100,38 @@ proc main() =
     power = PowerStatus(selected: "fixture", batteries: @[
       BatteryReading(name: "fixture", status: "Discharging", percent: 82)])
     text = newLauncherUi()
+  let approval = "https://romm.example/pair/device?code=TEST-CODE&redirect=%2Flibrary"
+  for theme in MenuTheme:
+    let
+      toolbarState = LibraryViewState(page: PairPage, theme: theme, transition: 1)
+      absent = ui.renderLibrary(paths, LibraryIndex(), toolbarState, PowerStatus(),
+        1280, 720, false, @[])
+      ups = PowerStatus(selected: "UPS", external: true, batteries: @[
+        BatteryReading(name: "UPS", status: "Full", percent: 100, ups: true)])
+      present = ui.renderLibrary(paths, LibraryIndex(), toolbarState, ups,
+        1280, 720, false, @[])
+      iconX = 1280 - 315
+    for x in iconX .. iconX + 34:
+      for y in 25 .. 42: doAssert absent[x, y] == absent[iconX - 4, 25]
+    doAssert present[iconX, 25] != absent[iconX, 25]
+    absent.writeFile("build/power-absent-" & ThemeKeys[theme] & ".png")
+    present.writeFile("build/power-ups-" & ThemeKeys[theme] & ".png")
+    var state = LibraryViewState(page: PairPage, theme: theme, transition: 1,
+      pairingUrl: approval, message: approval, busy: true)
+    doAssert state.selectedTarget().action == OpenRommLink
+    for dimensions in [(320, 240), (480, 640), (799, 599), (1280, 720)]:
+      let layout = state.pageLayout(LibraryIndex(), dimensions[0], dimensions[1])
+      doAssert layout.targets.len == 1
+      let area = layout.targets[0].area
+      doAssert area.y >= 64 and area.y + area.height < dimensions[1] - 35
+      doAssert layout.hitTarget(vec2((area.x + 4).float32, (area.y + 4).float32)).action == OpenRommLink
+      doAssert layout.hitTarget(vec2(0, 0)).action == NoViewAction
+      ui.renderLibrary(paths, LibraryIndex(), state, PowerStatus(), dimensions[0],
+        dimensions[1], false, @[]).writeFile("build/pair-link-" & ThemeKeys[theme] & "-" &
+        $dimensions[0] & "x" & $dimensions[1] & ".png")
+    state.pairingUrl = ""
+    doAssert state.selectedTarget().action == NoViewAction
+    doAssert state.pageLayout(LibraryIndex(), 640, 480).targets.len == 0
   defer: removeDir(root)
   createDir(root / "artwork")
   var index = LibraryIndex(version: 1, collections: @[

@@ -12,7 +12,7 @@ type
     BluetoothPromptPage, BluetoothKeyboardPage, BluetoothForgetPage, AudioUnavailablePage
   ViewAction* = enum
     NoViewAction, SelectGame, PlayGame, ShowGames, ShowTools, TestHardware,
-    ShowSystem, ShowCollections, ConnectRomm, SyncRomm, DisconnectRomm,
+    ShowSystem, ShowCollections, ConnectRomm, OpenRommLink, SyncRomm, DisconnectRomm,
     RebootDevice, ShutdownDevice, RescanGames, ShowAppearance, SelectTheme,
     ApplyTheme, CancelAppearance, PreviousFilter, NextFilter, ToggleCollection,
     CancelDialog, ConfirmPower, UseLocalSave, UseRemoteSave, SelectFilter,
@@ -47,7 +47,7 @@ type
     selected*, tool*, collection*, filter*, scroll*, workbench*, setting*: int
     wifi*: WifiView
     bluetooth*: BluetoothView
-    message*: string
+    message*, pairingUrl*: string
     busy*, error*, confirmYes*, reboot*: bool
     transition*: float32
   LibraryUi* = ref object
@@ -77,7 +77,7 @@ const
   ListRowHeight = 38
   ListRowStep = 43
   ActionLabels*: array[ViewAction, string] = ["", "", "Play", "Games", "Menu",
-    "Hardware Test", "System Info", "RomM collections", "Connect to RomM",
+    "Hardware Test", "System Info", "RomM collections", "Connect to RomM", "Open in browser",
     "Sync now", "Disconnect RomM", "Reboot", "Shut down", "Rescan games",
     "Appearance", "", "Apply", "Cancel", "Previous filter", "Next filter", "",
     "Cancel", "Confirm", "Local save", "RomM save", "", "Settings", "Wi-Fi", "",
@@ -161,6 +161,11 @@ proc bluetoothActions*(view: BluetoothView): seq[ViewAction] =
   if device.audioReady: result.add UseBluetoothAudio
   if device.paired: result.add ForgetBluetooth
   result.add ReturnBluetooth
+
+proc pairingLines*(text: string, width, height: int): seq[string] =
+  ## Wrap the approval link using the same compact/desktop metrics as its hit target.
+  for line in text.splitLines():
+    result.add line.wrapWords(max(12, (width - 48) div (if height < 300: 8 else: 12))).splitLines()
 
 proc pageLayout*(state: LibraryViewState, index: LibraryIndex,
     width, height: int): PageLayout =
@@ -283,6 +288,15 @@ proc pageLayout*(state: LibraryViewState, index: LibraryIndex,
     let footer = themeLayout(state.theme, width, height, 0, 0)
     result.targets.add target(footer.play, PlayGame)
     result.targets.add target(footer.tools, ShowGames)
+  of PairPage:
+    if state.pairingUrl.len > 0:
+      let
+        top = if height < 300: 110 else: 144
+        step = if height < 300: 20 else: 30
+        footer = height - (if height < 300: 42 else: 74)
+        rows = state.pairingUrl.pairingLines(width, height).len
+      result.targets.add target(UiRect(x: 24, y: top - 4, width: max(1, width - 48),
+        height: max(1, min(rows * step + 8, footer - top - 8))), OpenRommLink)
   else: discard
 
 proc hitTarget*(layout: PageLayout, point: Vec2): ViewTarget =
@@ -328,6 +342,8 @@ proc selectedTarget*(state: LibraryViewState): ViewTarget =
   of WorkbenchPage: result = ViewTarget(action: WorkbenchActions[state.workbench], index: state.workbench)
   of CollectionsPage: result = ViewTarget(action: ToggleCollection, index: state.collection)
   of AppearancePage: result.action = ApplyTheme
+  of PairPage:
+    if state.pairingUrl.len > 0: result.action = OpenRommLink
   of PowerPage: result.action = if state.confirmYes: ConfirmPower else: CancelDialog
   of ConflictPage: result.action = if state.confirmYes: UseRemoteSave else: UseLocalSave
   of SettingsPage: result = ViewTarget(action: SettingsActions[state.setting], index: state.setting)
@@ -420,6 +436,7 @@ proc toolbar(ui: LibraryUi, image: Image, power: PowerStatus, title: string) =
     tint = if draining: 0xb25b21'u32 else: p.accent
   image.rect(0, 0, image.width, 64, p.surface)
   ui.label(image, title, 16, 23, if image.width < 500: 16 else: 22)
+  if power.batteries.len == 0: return
   image.rect(x, 25, 32, 18, p.muted)
   image.rect(x + 32, 30, 3, 8, p.muted)
   image.rect(x + 2, 27, 28, 14, p.background)
@@ -824,13 +841,26 @@ proc renderLibrary*(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex,
       if y < height - 80: ui.label(result, shortText(line, max(10, (width - 48) div 9)), 24, y, 17, p.muted)
       y += 25
   elif state.page == PairPage:
-    ui.label(result, "Connect to RomM", 24, 92, 26, p.accent)
-    var y = 144
-    for line in state.message.splitLines():
-      for wrapped in line.wrapWords(max(15, (width - 48) div 12)).splitLines():
-        ui.label(result, wrapped, 24, y, 20)
-        y += 30
-    ui.label(result, "Approve in your browser. B cancels.", 24, height - 74, 16, p.muted)
+    let
+      compact = height < 300
+      footer = height - (if compact: 42 else: 74)
+      clickable = state.pairingUrl.len > 0
+    ui.label(result, "Connect to RomM", 24, if compact: 80 else: 92,
+      if compact: 20 else: 26, p.accent)
+    var y = if compact: 110 else: 144
+    for wrapped in (if clickable: state.pairingUrl else: state.message).pairingLines(width, height):
+      if y + (if compact: 14 else: 20) < footer - 8:
+        ui.label(result, wrapped, 24, y, if compact: 14 else: 20,
+          if clickable: p.accent else: p.text)
+      y += (if compact: 20 else: 30)
+    if clickable:
+      let area = areas.targets[0].area
+      result.rect(area.x, area.y + area.height - 1, area.width, 1, p.accent)
+    ui.label(result, if clickable and state.error:
+      shortText(state.message, max(12, (width - 48) div (if compact: 8 else: 9)))
+      elif clickable: (if compact: "Click / A: browser. B: cancel" else:
+      "Click link or press A/Enter. B cancels.") else:
+      "Approve in your browser. B cancels.", 24, footer, if compact: 14 else: 16, p.muted)
   elif state.page in {PowerPage, ConflictPage}:
     let powerPage = state.page == PowerPage
     ui.label(result, if powerPage:

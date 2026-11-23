@@ -6,6 +6,7 @@ type
     name*, status*, error*: string
     percent*: int
     currentMicroamps*: Option[int]
+    ups*: bool
   BatteryFlow* = enum
     UnknownFlow, ChargingFlow, DischargingFlow, FullFlow, IdleFlow
   PowerStatus* = object
@@ -17,6 +18,42 @@ type
 proc readValue(path: string): string =
   ## Read an optional OS attribute without inventing a value.
   if fileExists(path): readFile(path).strip() else: ""
+
+proc upowerStatus*(contents: string): PowerStatus =
+  ## Decode UPower's typed display-device properties, excluding peripheral batteries.
+  let properties = parseJson(contents)["data"][0]
+  let kind = properties{"Type", "data"}.getInt()
+  if kind notin [2, 3] or not properties{"IsPresent", "data"}.getBool(): return
+  let
+    percentage = properties{"Percentage", "data"}.getFloat(-1)
+    state = properties{"State", "data"}.getInt()
+    name = if kind == 3: "UPS" else: "Battery"
+    status = case state
+      of 1: "Charging"
+      of 2: "Discharging"
+      of 3: "Empty"
+      of 4: "Full"
+      of 5, 6: "Not charging"
+      else: "Unknown"
+  result.selected = name
+  result.external = state in [1, 4, 5]
+  result.batteries.add BatteryReading(name: name, status: status, ups: kind == 3,
+    percent: if percentage >= 0 and percentage <= 100: int(percentage) else: -1)
+
+proc desktopPower*(): PowerStatus =
+  ## Query an already-running UPower service with a bounded, read-only optional call.
+  if findExe("busctl").len == 0: return
+  try:
+    let process = startProcess("busctl", args = ["--system", "--auto-start=no",
+      "--timeout=250ms", "--json=short", "call", "org.freedesktop.UPower",
+      "/org/freedesktop/UPower/devices/DisplayDevice", "org.freedesktop.DBus.Properties",
+      "GetAll", "s", "org.freedesktop.UPower.Device"],
+      options = {poUsePath, poStdErrToStdOut})
+    defer: process.close()
+    let output = process.outputStream.readAll()
+    if process.waitForExit() == 0: result = upowerStatus(output)
+  except CatchableError:
+    discard # Desktops without UPower have no battery widget.
 
 proc readPower*(selected: string, root = "/sys/class/power_supply",
     currentSupply = ""): PowerStatus =
@@ -55,6 +92,8 @@ proc readPower*(selected: string, root = "/sys/class/power_supply",
         percent: -1, error: getCurrentExceptionMsg())
   if result.selected.len == 0 and result.batteries.len > 0:
     result.selected = result.batteries[0].name
+  if result.batteries.len == 0 and selected.len == 0 and root == "/sys/class/power_supply":
+    result = desktopPower()
 
 proc selectedBattery*(power: PowerStatus): BatteryReading =
   ## Never substitute a different gauge for an explicitly selected battery.
@@ -85,8 +124,10 @@ proc batteryText*(power: PowerStatus): string =
   ## Show battery percentage and external-power connection independently of flow.
   let reading = power.selectedBattery()
   result = if reading.percent >= 0: $reading.percent & "%" else: "Battery —"
+  if reading.ups: result = if reading.percent >= 0: "UPS " & result else: "UPS —"
   if power.external: result &= " · Plugged in"
-  elif reading.percent >= 0: result &= " · On battery"
+  elif reading.percent >= 0 and (not reading.ups or reading.status in ["Discharging", "Empty"]):
+    result &= " · On battery"
 
 proc chargeText*(power: PowerStatus): string =
   ## Describe battery flow while plugged in, including an unavailable measurement.

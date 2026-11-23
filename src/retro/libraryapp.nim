@@ -2,7 +2,7 @@ import
   std/[json, monotimes, os, osproc, streams, strutils, tempfiles, times, unicode],
   paddy, pixie, windy,
   ../touchkeyboard,
-  ./[anbernic, audioroute, bluetooth, bluetoothworker, display, gamepad, gamelibrary, input, libraryview,
+  ./[anbernic, audioroute, bluetooth, bluetoothworker, browser, display, gamepad, gamelibrary, input, libraryview,
     menu, menuthemes, powercontrol, settings, systeminfo, systemvolume,
     testerprocess, volumeui, wifi]
 
@@ -69,6 +69,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     pending: seq[LibraryInput]
     pendingTargets: seq[ViewTarget]
     job: Process
+    browserJob: Process
     jobKind: string
     wifiJob: Process
     wifiKind: string
@@ -125,12 +126,14 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       job.close()
       job = nil
     state.busy = false
+    state.pairingUrl = ""
 
   proc stopWifiJob() =
     ## Ask the Wi-Fi worker to stop; a connect restores the previous network first.
     if wifiJob != nil and wifiJob.running(): wifiJob.terminate()
 
   defer:
+    if browserJob != nil: browserJob.close()
     bluetoothWorker.close()
     if wifiJob != nil:
       stopWifiJob()
@@ -460,6 +463,15 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     if state.page == ToolsPage: state.tool = item.index
     elif state.page == WorkbenchPage: state.workbench = item.index
     case item.action
+    of OpenRommLink:
+      if desktop and state.page == PairPage:
+        if browserJob != nil:
+          if browserJob.running(): return
+          discard browserJob.waitForExit()
+          browserJob.close()
+          browserJob = nil
+        browserJob = openPairingLink(state.pairingUrl, config.rommUrl)
+        state.error = false
     of SelectGame: state.selected = item.index
     of ShowGames: state.page = GamesPage
     of ShowTools: state.page = ToolsPage
@@ -607,6 +619,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
         state.page = CollectionsPage
         startJob("collections")
       of ConnectRomm:
+        state.pairingUrl = ""
         state.page = PairPage
         startJob("pair")
       of SyncRomm: startJob("sync")
@@ -663,15 +676,28 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
   while not quit and not stopping() and
       (duration == 0 or (getMonoTime() - started).inSeconds < duration):
     if not screen.poll(escapeCloses = false): break
+    if browserJob != nil and not browserJob.running():
+      let code = browserJob.waitForExit()
+      browserJob.close()
+      browserJob = nil
+      if code != 0:
+        state.error = true
+        state.message = "Could not open the browser; use the displayed link."
+        dirty = true
     if job != nil:
       if fileExists(progressPath):
         let progress = parseFile(progressPath)
         let message = progress.stringField("message")
-        if message != state.message: state.message = message; dirty = true
+        if desktop and jobKind == "pair" and isPairingLink(message, config.rommUrl):
+          state.pairingUrl = message
+        if message != state.message and not (jobKind == "pair" and state.error):
+          state.message = message
+          dirty = true
       if not job.running():
         let code = job.waitForExit()
         job.close()
         job = nil
+        state.pairingUrl = ""
         state.busy = false
         state.error = code != 0
         if code != 0 and (not fileExists(progressPath) or

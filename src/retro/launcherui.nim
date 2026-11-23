@@ -76,6 +76,7 @@ proc toolbar*(ui: LauncherUi, image: Image, title: string, power: PowerStatus) =
   ## Keep connection state and battery flow visible as separate toolbar lines.
   image.rect(0, 0, image.width, ToolbarHeight, PanelColor)
   ui.label(image, title, Margin, 20, 22)
+  if power.batteries.len == 0: return
   let
     x = max(image.width div 2, image.width - 315)
     reading = power.selectedBattery()

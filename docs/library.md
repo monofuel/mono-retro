@@ -17,6 +17,10 @@ build/mono-retro --library:/path/to/games --config:/path/to/library.json
 Both executables and `mono-retro-library` must be installed together. Without
 `--library`, the launcher retains its diagnostic menu and explicit test wrappers.
 
+The header hides its battery indicator when no battery or UPS is detected.
+Desktop UPS charge comes from the running UPower service; handheld gauges
+continue to use their configured Linux power supplies.
+
 ## Wi-Fi settings
 
 Menu → Settings → Wi-Fi lists nearby networks and the current connection. Saved
@@ -130,7 +134,8 @@ State compatibility still depends on the ROM, core build and options.
 ## Connect to RomM
 
 Configure the server origin, then choose **Menu → Connect to RomM**. The menu
-shows a complete approval link containing the pairing code. Open it in a browser, sign in and
+shows a complete approval link containing the pairing code. On desktop, click
+the link or press Enter to open your browser. Sign in and
 approve the device. The handheld polls at the server's requested interval and
 stores the returned device-bound token in `private/romm-credentials.json`
 beside its OS configuration. No account password is entered on the handheld.
