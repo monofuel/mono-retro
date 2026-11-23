@@ -144,6 +144,7 @@ proc platformFor*(path: string): string =
   of ".gbc": "gbc"
   of ".nes": "nes"
   of ".smc", ".sfc": "snes"
+  of ".z64", ".n64", ".v64": "n64"
   else: ""
 
 proc coreFor*(config: LibraryConfig, game: LibraryGame): string =

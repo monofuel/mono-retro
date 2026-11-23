@@ -29,6 +29,8 @@ proc main() =
     CoreConfig(key: "ds", path: corePath, platforms: @["nds"], arguments: @["--ds-layout:separate"])])
   writeFile(configPath, $config.toJson())
   doAssert loadConfig(configPath).cores.len == 1
+  for filename in ["Game.z64", "Game.N64", "Game.v64"]:
+    doAssert platformFor(filename) == "n64"
   paths.prepareStorage(config)
   var index = paths.scanLibrary(config)
   doAssert index.games.len == 2

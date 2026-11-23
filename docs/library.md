@@ -21,6 +21,12 @@ The header hides its battery indicator when no battery or UPS is detected.
 Desktop UPS charge comes from the running UPower service; handheld gauges
 continue to use their configured Linux power supplies.
 
+For desktop N64 games, `tools/retroarch-player.sh` can serve as `playerPath`.
+Add `--frontend:retroarch` to the N64 core's arguments; other cores continue
+through the bundled player. Install RetroArch and Mupen64Plus-Next, then sign in
+under RetroArch **Settings → Achievements**. Saves stay in the menu's per-game
+directory, with RetroArch save states in its `states/` subfolder.
+
 ## Wi-Fi settings
 
 Menu → Settings → Wi-Fi lists nearby networks and the current connection. Saved
