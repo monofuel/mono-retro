@@ -44,6 +44,8 @@ proc testWifiPages(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex, powe
   var state = LibraryViewState(page: SettingsPage, theme: LibraryTheme, wifi: wifi)
   doAssert state.selectedTarget().action == ShowWifi
   state.moveSelection(index, 640, 480, 1, true)
+  doAssert state.selectedTarget().action == ShowBluetooth
+  state.moveSelection(index, 640, 480, 1, true)
   doAssert state.selectedTarget().action == ShowAppearance
   state.page = WifiPage
   state.moveSelection(index, 640, 480, 1, true)

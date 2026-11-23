@@ -2,7 +2,7 @@ import
   std/[json, monotimes, os, osproc, streams, strutils, tempfiles, times, unicode],
   paddy, pixie, windy,
   ../touchkeyboard,
-  ./[anbernic, display, gamepad, gamelibrary, input, libraryview,
+  ./[anbernic, audioroute, bluetooth, bluetoothworker, display, gamepad, gamelibrary, input, libraryview,
     menu, menuthemes, powercontrol, settings, systeminfo, systemvolume,
     testerprocess, volumeui, wifi]
 
@@ -20,6 +20,7 @@ const
   WifiStatusIntervalMs = 2000
   WifiConnectTimeoutSeconds = 45
   WifiPasswordLimit = 64
+  AudioReadyWaitSeconds = 15
 
 proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     duration: int, stopping: proc(): bool, themeOverride = "") =
@@ -36,6 +37,8 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     wifiHelper = getAppDir() / "mono-retro-wifi"
     wifiProgressPath = jobDirectory / "wifi-progress.json"
     wifiResultPath = jobDirectory / "wifi-result.json"
+    bluetoothWorker = newBluetoothWorker(getAppDir() / "mono-retro-bluetooth",
+      jobDirectory / "bluetooth-state.json")
     started = getMonoTime()
     preferencesPath = themePreferencesPath()
   createDir(jobDirectory)
@@ -78,9 +81,32 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     networkDeadline = started + initDuration(seconds = StartupNetworkWaitSeconds)
     quit = false
     sizes: seq[IVec2]
+    bluetoothReturn = BluetoothPage
+    audioGame: string
+    audioTester, retryAudio, audioApproved: bool
+    audioRetryStarted: MonoTime
+
+  proc activeKeyboard(): var TouchKeyboard =
+    ## Use the same keyboard component for Wi-Fi and Bluetooth pairing.
+    if state.page == BluetoothKeyboardPage: return state.bluetooth.keyboard
+    return state.wifi.keyboard
+
+  proc sendBluetooth(action: string, address = "", value = "", enabled = false) =
+    ## Keep radio commands asynchronous and pairing input out of arguments.
+    bluetoothWorker.send(BtCommand(action: action, address: address, value: value, enabled: enabled))
+    state.bluetooth.state = bluetoothWorker.state
+    state.bluetooth.message = ""
+    dirty = true
+
+  proc refreshAudioSelection() =
+    ## Show the output that will be used by newly launched playback apps.
+    let output = loadAudioOutput()
+    state.bluetooth.audioAddress = output.address
+    state.bluetooth.audioName = output.name
 
   proc closeScreens() =
     ## Release gamepads, touch, volume and display handles before a child starts.
+    bluetoothWorker.close()
     volume.close()
     volume = nil
     closeGamepads()
@@ -105,6 +131,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     if wifiJob != nil and wifiJob.running(): wifiJob.terminate()
 
   defer:
+    bluetoothWorker.close()
     if wifiJob != nil:
       stopWifiJob()
       if wifiJob.waitForExit(10000) == -1:
@@ -249,10 +276,28 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
   proc keyboardLayout(): KeyboardLayout =
     ## Lay out the password keyboard on the touch screen.
     let last = screen.count() - 1
-    state.wifi.keyboard.keyboardLayout(keyboardArea(screen.width(last), screen.height(last)))
+    activeKeyboard().keyboardLayout(keyboardArea(screen.width(last), screen.height(last)))
 
   proc keyboardResult(outcome: KeyboardResult) =
     ## Leave or submit the password page after a keyboard action.
+    if state.page == BluetoothKeyboardPage:
+      case outcome
+      of KeyboardSubmitted:
+        let text = state.bluetooth.keyboard.text
+        if text.len == 0 or (state.bluetooth.state.prompt.kind == PasskeyPrompt and
+            not text.allCharsInSet(Digits)):
+          state.bluetooth.keyboard.label = if state.bluetooth.state.prompt.kind == PasskeyPrompt:
+            "Use 1–6 digits" else: "Enter the device PIN"
+          dirty = true
+          return
+        sendBluetooth("reply", value = state.bluetooth.keyboard.text)
+      of KeyboardCancelled:
+        sendBluetooth("cancel")
+        state.bluetooth.keyboard.clear()
+        state.page = bluetoothReturn
+      else: discard
+      dirty = true
+      return
     case outcome
     of KeyboardSubmitted:
       let network = state.wifi.networks[clamp(state.wifi.selected, 0, state.wifi.networks.high)]
@@ -281,14 +326,14 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
   proc pointer(phase: TouchPhase, point: Vec2, screenIndex: int, id = 0'i32) =
     ## Select covers on tap and require a separate Play action to launch.
     if screen.count() > 1 and screenIndex == 0: return
-    if state.page == WifiPasswordPage and screenIndex == screen.count() - 1:
+    if state.page in {WifiPasswordPage, BluetoothKeyboardPage} and screenIndex == screen.count() - 1:
       if phase == TouchBegin and pointerId == -1:
         pointerId = id
         pointerScreen = screenIndex
       elif phase in {TouchEnd, TouchCancel} and pointerId == id:
         pointerId = -1
         pointerScreen = -1
-        if phase == TouchEnd: keyboardResult(state.wifi.keyboard.tap(keyboardLayout(), point))
+        if phase == TouchEnd: keyboardResult(activeKeyboard().tap(keyboardLayout(), point))
         dirty = true
       return
     if phase == TouchBegin:
@@ -328,8 +373,8 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       screen.window(screenIndex).onRune = proc(rune: Rune) =
         # The keyboard rejects invalid UTF-8 by raising, so drop invalid code points here.
         let text = $rune
-        if state.page == WifiPasswordPage and text.validateUtf8() == -1 and
-            state.wifi.keyboard.insert(text) != KeyboardIgnored:
+        if state.page in {WifiPasswordPage, BluetoothKeyboardPage} and text.validateUtf8() == -1 and
+            activeKeyboard().insert(text) != KeyboardIgnored:
           dirty = true
     if not desktop:
       for binding in settings.bindings:
@@ -342,9 +387,31 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     mouseHeld = false
     pointerId = -1
     dirty = true
+    refreshAudioSelection()
+    if state.bluetooth.audioAddress.len > 0: sendBluetooth("status")
+
+  proc allowAudio(gameHash: string, tester: bool): bool =
+    ## Require an available selected output before releasing the launcher's screens.
+    refreshAudioSelection()
+    if state.bluetooth.audioAddress.len == 0: return true
+    if audioApproved:
+      audioApproved = false
+      return true
+    if bluetoothWorker.fresh and bluetoothWorker.state.available and
+        bluetoothWorker.state.error.len == 0:
+      for device in bluetoothWorker.state.devices:
+        if device.address == state.bluetooth.audioAddress and device.audioReady: return true
+    audioGame = gameHash
+    audioTester = tester
+    state.bluetooth.action = 0
+    state.page = AudioUnavailablePage
+    sendBluetooth("status")
+    state.bluetooth.message = "Connect headphones, retry, or choose speakers."
+    return false
 
   proc play(hash: string) =
     ## Validate mounted content and use the player's orderly save/exit lifecycle.
+    if not allowAudio(hash, false): return
     var lock = paths.lockLibrary(config)
     defer: lock.close()
     var game: LibraryGame
@@ -366,6 +433,28 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     lock.close()
     if fileExists(paths.credentials): startJob("sync")
 
+  proc launchTester() =
+    ## Share output readiness and orderly child handoff with game launches.
+    if not allowAudio("", true): return
+    closeScreens()
+    try:
+      let code = runTester(getAppDir() / "mono-retro-hwtest",
+        @["test", "--seconds:3600"] & displayArguments, stopping)
+      if code != 0: raise newException(IOError, "Hardware Test exited with code " & $code)
+    finally:
+      if not stopping(): openScreens()
+
+  proc launchPendingAudio() =
+    ## Resume only the app the user already requested from the unavailable dialog.
+    let
+      hash = move(audioGame)
+      tester = audioTester
+    audioTester = false
+    retryAudio = false
+    state.page = state.theme.homePage()
+    if tester: launchTester()
+    elif hash.len > 0: play(hash)
+
   proc activate(item: ViewTarget) =
     ## Keep application operations shared across every theme and input method.
     if state.page == ToolsPage: state.tool = item.index
@@ -375,7 +464,64 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     of ShowGames: state.page = GamesPage
     of ShowTools: state.page = ToolsPage
     of ShowAppearance: state.beginAppearance()
-    of ShowSettings: state.page = SettingsPage
+    of ShowSettings:
+      if state.page == BluetoothPage: sendBluetooth("cancel")
+      state.page = SettingsPage
+    of ShowBluetooth:
+      refreshAudioSelection()
+      state.page = BluetoothPage
+      sendBluetooth("status")
+    of ScanBluetooth: sendBluetooth("scan", enabled = true)
+    of PowerBluetooth:
+      sendBluetooth("power", enabled = not state.bluetooth.state.powered)
+    of SelectBluetoothDevice:
+      if item.index in 0 ..< state.bluetooth.state.devices.len:
+        state.bluetooth.device = state.bluetooth.state.devices[item.index]
+        state.bluetooth.selected = item.index + 1
+        state.bluetooth.action = 0
+        state.page = BluetoothDevicePage
+    of ReturnBluetooth:
+      if state.bluetooth.state.busy: sendBluetooth("cancel")
+      state.page = BluetoothPage
+      state.bluetooth.confirm = false
+    of ConnectBluetooth:
+      let device = state.bluetooth.bluetoothDevice()
+      sendBluetooth(if device.paired: "connect" else: "pair", device.address)
+    of DisconnectBluetooth:
+      sendBluetooth("disconnect", state.bluetooth.device.address)
+    of ForgetBluetooth:
+      state.page = BluetoothForgetPage
+      state.bluetooth.confirm = false
+    of ConfirmForgetBluetooth:
+      sendBluetooth("forget", state.bluetooth.device.address)
+      state.page = BluetoothPage
+    of UseSpeakerAudio, UseBluetoothAudio:
+      if item.action == UseSpeakerAudio:
+        saveAudioOutput(AudioOutputSelection())
+      else:
+        let device = state.bluetooth.bluetoothDevice()
+        if not device.audioReady: raise newException(IOError, "Headphone audio is not ready")
+        saveAudioOutput(AudioOutputSelection(address: device.address, name: device.name))
+      refreshAudioSelection()
+      state.bluetooth.message = "Output selected for the next app launch."
+    of AcceptBluetoothPrompt, RejectBluetoothPrompt:
+      sendBluetooth("reply", value = if item.action == AcceptBluetoothPrompt: "yes" else: "no")
+      state.page = bluetoothReturn
+    of RetryAudio:
+      retryAudio = true
+      audioRetryStarted = getMonoTime()
+      sendBluetooth("connect", state.bluetooth.audioAddress)
+      state.bluetooth.message = "Connecting headphones…"
+    of SpeakerAudio:
+      saveAudioOutput(AudioOutputSelection())
+      refreshAudioSelection()
+      launchPendingAudio()
+    of CancelAudio:
+      if retryAudio: sendBluetooth("cancel")
+      retryAudio = false
+      audioGame = ""
+      audioTester = false
+      state.page = state.theme.homePage()
     of ShowWifi:
       state.page = WifiPage
       startWifi("scan")
@@ -412,6 +558,9 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       state.filter = (state.filter + count + (if item.action == NextFilter: 1 else: -1)) mod count
       state.selected = 0
     else:
+      if item.action in {PlayGame, TestHardware, OpenGrimoire} and
+          (state.bluetooth.state.busy or state.bluetooth.state.prompt.kind != NoPrompt):
+        raise newException(IOError, "Finish or cancel the Bluetooth operation first")
       if item.action in {PlayGame, TestHardware, OpenGrimoire} and wifiKind == "connect":
         raise newException(IOError, "Wait for Wi-Fi to finish connecting")
       if item.action in {PlayGame, OpenGrimoire} and jobKind == "startup-probe":
@@ -438,11 +587,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
             offlineGame = ""
             play(hash)
       of TestHardware:
-        closeScreens()
-        try:
-          discard runTester(getAppDir() / "mono-retro-hwtest", @["test", "--seconds:3600"] & displayArguments, stopping)
-        finally:
-          if not stopping(): openScreens()
+        launchTester()
       of OpenGrimoire:
         if config.grimoireCommand.len == 0:
           raise newException(IOError, "Grimoire is not configured; set grimoireCommand in the library configuration")
@@ -508,6 +653,8 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
   openScreens()
   try:
     reload()
+    refreshAudioSelection()
+    if state.bluetooth.audioAddress.len > 0: sendBluetooth("status")
     startJob("scan")
   except CatchableError as error:
     state.message = error.msg
@@ -575,6 +722,57 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
             dirty = true
         except CatchableError: discard
       if not wifiJob.running(): finishWifi()
+    try:
+      if bluetoothWorker.poll():
+        let
+          previousPrompt = state.bluetooth.state.prompt
+          selectedAddress = if state.bluetooth.selected > 0 and
+              state.bluetooth.selected <= state.bluetooth.state.devices.len:
+            state.bluetooth.state.devices[state.bluetooth.selected - 1].address else: ""
+        state.bluetooth.state = bluetoothWorker.state
+        if selectedAddress.len > 0:
+          state.bluetooth.selected = 0
+          for position, device in state.bluetooth.state.devices:
+            if device.address == selectedAddress: state.bluetooth.selected = position + 1
+        let prompt = state.bluetooth.state.prompt
+        if prompt.kind != NoPrompt and prompt != previousPrompt and state.page in {
+            BluetoothPage, BluetoothDevicePage, BluetoothPromptPage, BluetoothKeyboardPage}:
+          if state.page notin {BluetoothPromptPage, BluetoothKeyboardPage}: bluetoothReturn = state.page
+          state.bluetooth.confirm = false
+          if prompt.kind in {PinPrompt, PasskeyPrompt}:
+            state.bluetooth.keyboard = newTouchKeyboard(label = "Bluetooth PIN",
+              submitLabel = "Pair", maxRunes = if prompt.kind == PasskeyPrompt: 6 else: 16,
+              masked = false, asciiOnly = true)
+            state.page = BluetoothKeyboardPage
+          else: state.page = BluetoothPromptPage
+        elif prompt.kind == NoPrompt and previousPrompt.kind != NoPrompt and
+            state.page in {BluetoothPromptPage, BluetoothKeyboardPage}:
+          state.bluetooth.keyboard.clear()
+          state.page = bluetoothReturn
+        dirty = true
+      if retryAudio:
+        var ready = false
+        for device in state.bluetooth.state.devices:
+          if device.address == state.bluetooth.audioAddress and device.audioReady: ready = true
+        if bluetoothWorker.fresh and ready and not state.bluetooth.state.busy:
+          audioApproved = true
+          launchPendingAudio()
+        elif (bluetoothWorker.fresh and state.bluetooth.state.error.len > 0) or
+            (getMonoTime() - audioRetryStarted).inSeconds >= AudioReadyWaitSeconds:
+          let failure = state.bluetooth.state.error
+          sendBluetooth("cancel")
+          retryAudio = false
+          state.bluetooth.message = if failure.len > 0: failure
+            else: "Headphone audio is not ready. Retry or choose speakers."
+          dirty = true
+    except CatchableError as error:
+      retryAudio = false
+      state.bluetooth.state.error = error.msg
+      if state.page notin {BluetoothPage, BluetoothDevicePage, BluetoothPromptPage,
+          BluetoothKeyboardPage, BluetoothForgetPage, AudioUnavailablePage}:
+        state.message = error.msg
+        state.error = true
+      dirty = true
     if state.page == WifiPage and wifiJob == nil and not state.wifi.unavailable and
         getMonoTime() >= wifiStatusAt:
       let
@@ -635,9 +833,9 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
       for screenIndex in 0 ..< screen.count():
         let window = screen.window(screenIndex)
         activationHeld = activationHeld or window.buttonDown[KeyEnter] or window.buttonDown[MouseLeft]
-        if state.page == WifiPasswordPage:
+        if state.page in {WifiPasswordPage, BluetoothKeyboardPage}:
           # Letter keys type through onRune, so only editing keys map to actions here.
-          if window.buttonPressed[KeyBackspace]: discard state.wifi.keyboard.backspace(); dirty = true
+          if window.buttonPressed[KeyBackspace]: discard activeKeyboard().backspace(); dirty = true
           for (key, action) in [(KeyUp, MoveUp), (KeyDown, MoveDown), (KeyLeft, PreviousFilter),
               (KeyRight, NextFilter), (KeyEnter, OpenTools), (KeyEscape, GoBack)]:
             if window.buttonPressed[key]: pending.add action
@@ -659,26 +857,48 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     if not activationHeld: armed = true
     for action in pending:
       try:
-        if state.page == WifiPasswordPage and action != ActivateTarget:
+        if state.page in {WifiPasswordPage, BluetoothKeyboardPage} and action != ActivateTarget:
           let layout = keyboardLayout()
           case action
           of MoveUp, MoveDown, MoveLeft, MoveRight:
-            discard state.wifi.keyboard.moveFocus(layout,
+            discard activeKeyboard().moveFocus(layout,
               (if action == MoveLeft: -1 elif action == MoveRight: 1 else: 0),
               (if action == MoveUp: -1 elif action == MoveDown: 1 else: 0))
           of OpenGame:
             if armed:
               armed = false
-              keyboardResult(state.wifi.keyboard.activateFocused(layout))
+              keyboardResult(activeKeyboard().activateFocused(layout))
           of GoBack: keyboardResult(KeyboardCancelled)
-          of Details: discard state.wifi.keyboard.backspace()
-          of Favourite: discard state.wifi.keyboard.pressAction(ShiftKey)
+          of Details: discard activeKeyboard().backspace()
+          of Favourite: discard activeKeyboard().pressAction(ShiftKey)
           of OpenTools: keyboardResult(KeyboardSubmitted)
-          of PreviousFilter: discard state.wifi.keyboard.moveCursor(-1)
-          of NextFilter: discard state.wifi.keyboard.moveCursor(1)
+          of PreviousFilter: discard activeKeyboard().moveCursor(-1)
+          of NextFilter: discard activeKeyboard().moveCursor(1)
           else: discard
           dirty = true
           continue
+        if state.page in {BluetoothPage, BluetoothDevicePage, BluetoothPromptPage,
+            BluetoothForgetPage, AudioUnavailablePage}:
+          if action == GoBack:
+            case state.page
+            of BluetoothPage:
+              sendBluetooth("cancel")
+              state.page = SettingsPage
+            of BluetoothPromptPage:
+              sendBluetooth("cancel")
+              state.page = bluetoothReturn
+            of AudioUnavailablePage: activate(ViewTarget(action: CancelAudio))
+            else:
+              if state.bluetooth.state.busy: sendBluetooth("cancel")
+              state.page = BluetoothPage
+            dirty = true
+            continue
+          if action == Details and state.page == BluetoothPage:
+            activate(ViewTarget(action: ScanBluetooth))
+            continue
+          if action == Favourite and state.page == BluetoothPage:
+            activate(ViewTarget(action: PowerBluetooth))
+            continue
         if action == GoBack and state.page in {SettingsPage, WifiPage, WifiConfirmPage}:
           if state.page == WifiConfirmPage: state.page = WifiPage
           elif state.page == WifiPage and wifiKind == "connect":
@@ -709,7 +929,12 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
           elif state.page != state.theme.homePage(): state.page = state.theme.homePage()
           elif desktop and not cancelling: quit = true
         elif action == OpenTools:
-          if state.page != AppearancePage: state.page = ToolsPage
+          if state.page == AudioUnavailablePage: activate(ViewTarget(action: CancelAudio))
+          elif state.page in {BluetoothPromptPage, BluetoothKeyboardPage}: discard
+          elif state.page in {BluetoothPage, BluetoothDevicePage, BluetoothForgetPage}:
+            sendBluetooth("cancel")
+            state.page = ToolsPage
+          elif state.page != AppearancePage: state.page = ToolsPage
         elif action in {PreviousFilter, NextFilter}:
           if state.page == AppearancePage:
             state.moveSelection(index, screen.width(screen.count() - 1), screen.height(screen.count() - 1),

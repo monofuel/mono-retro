@@ -2,13 +2,14 @@ import
   std/[algorithm, os, strutils, tables, unicode, wordwrap],
   pixie,
   ../touchkeyboard,
-  ./[gamelibrary, launcherui, menuthemes, pattern, systeminfo, wifi]
+  ./[bluetooth, gamelibrary, launcherui, menuthemes, pattern, systeminfo, wifi]
 
 type
   LibraryPage* = enum
     GamesPage, ToolsPage, CollectionsPage, GamePage, SystemPage, PairPage,
     PowerPage, ConflictPage, WorkbenchPage, AppearancePage, SettingsPage,
-    WifiPage, WifiPasswordPage, WifiConfirmPage
+    WifiPage, WifiPasswordPage, WifiConfirmPage, BluetoothPage, BluetoothDevicePage,
+    BluetoothPromptPage, BluetoothKeyboardPage, BluetoothForgetPage, AudioUnavailablePage
   ViewAction* = enum
     NoViewAction, SelectGame, PlayGame, ShowGames, ShowTools, TestHardware,
     ShowSystem, ShowCollections, ConnectRomm, SyncRomm, DisconnectRomm,
@@ -16,7 +17,10 @@ type
     ApplyTheme, CancelAppearance, PreviousFilter, NextFilter, ToggleCollection,
     CancelDialog, ConfirmPower, UseLocalSave, UseRemoteSave, SelectFilter,
     ShowSettings, ShowWifi, SelectWifiNetwork, RescanWifi, ConnectWifi, CancelWifi,
-    OpenGrimoire
+    OpenGrimoire, ShowBluetooth, SelectBluetoothDevice, ScanBluetooth,
+    PowerBluetooth, ConnectBluetooth, DisconnectBluetooth, ForgetBluetooth,
+    ConfirmForgetBluetooth, UseBluetoothAudio, UseSpeakerAudio, ReturnBluetooth,
+    AcceptBluetoothPrompt, RejectBluetoothPrompt, RetryAudio, SpeakerAudio, CancelAudio
   ViewTarget* = object
     area*: UiRect
     action*: ViewAction
@@ -29,11 +33,20 @@ type
     message*: string
     error*, busy*, connecting*, unavailable*: bool
     keyboard*: TouchKeyboard
+  BluetoothView* = object
+    state*: BtState
+    selected*, action*: int
+    device*: BtDevice
+    audioAddress*, audioName*: string
+    keyboard*: TouchKeyboard
+    confirm*: bool
+    message*: string
   LibraryViewState* = object
     page*, appearanceReturn*: LibraryPage
     theme*, previewTheme*: MenuTheme
     selected*, tool*, collection*, filter*, scroll*, workbench*, setting*: int
     wifi*: WifiView
+    bluetooth*: BluetoothView
     message*: string
     busy*, error*, confirmYes*, reboot*: bool
     transition*: float32
@@ -58,7 +71,7 @@ const
     ConnectRomm, SyncRomm, DisconnectRomm, RebootDevice, ShutdownDevice, RescanGames]
   WorkbenchActions* = [TestHardware, ShowSystem, ShowGames, SyncRomm, ShowAppearance,
     ShowSettings, ShowTools]
-  SettingsActions* = [ShowWifi, ShowAppearance]
+  SettingsActions* = [ShowWifi, ShowBluetooth, ShowAppearance]
   MinimumWorkbenchItem = 30
   WifiListTop = 150
   ListRowHeight = 38
@@ -68,7 +81,9 @@ const
     "Sync now", "Disconnect RomM", "Reboot", "Shut down", "Rescan games",
     "Appearance", "", "Apply", "Cancel", "Previous filter", "Next filter", "",
     "Cancel", "Confirm", "Local save", "RomM save", "", "Settings", "Wi-Fi", "",
-    "Scan", "Connect", "Cancel", "Grimoire"]
+    "Scan", "Connect", "Cancel", "Grimoire", "Bluetooth", "", "Scan",
+    "Power", "Connect", "Disconnect", "Forget", "Forget", "Use for audio",
+    "Use speakers", "Back", "Confirm", "Cancel", "Retry", "Use speakers", "Cancel"]
   DefaultText = 0xffffffff'u32
 
 proc newLibraryUi*(): LibraryUi =
@@ -130,6 +145,23 @@ proc target(area: UiRect, action: ViewAction, index = 0): ViewTarget =
   ## Associate one visible control with its application action.
   ViewTarget(area: area, action: action, index: index)
 
+proc bluetoothDevice*(view: BluetoothView): BtDevice =
+  ## Keep the selected identity stable when discovery changes the list order.
+  for device in view.state.devices:
+    if device.address == view.device.address: return device
+  result = view.device
+  result.connected = false
+  result.audioReady = false
+  result.gamepadReady = false
+
+proc bluetoothActions*(view: BluetoothView): seq[ViewAction] =
+  ## Offer actions supported by the current device's confirmed state.
+  let device = view.bluetoothDevice()
+  result.add if device.connected: DisconnectBluetooth else: ConnectBluetooth
+  if device.audioReady: result.add UseBluetoothAudio
+  if device.paired: result.add ForgetBluetooth
+  result.add ReturnBluetooth
+
 proc pageLayout*(state: LibraryViewState, index: LibraryIndex,
     width, height: int): PageLayout =
   ## Share every interactive rectangle between rendering and pointer handling.
@@ -185,6 +217,42 @@ proc pageLayout*(state: LibraryViewState, index: LibraryIndex,
     for item, action in SettingsActions:
       result.targets.add target(UiRect(x: 16, y: 115 + item * ListRowStep,
         width: width - 32, height: ListRowHeight), action, item)
+  of BluetoothPage:
+    let
+      rows = max(1, (height - 196) div ListRowStep)
+      first = max(0, state.bluetooth.selected - rows + 1)
+      count = state.bluetooth.state.devices.len + 1
+    for item in first ..< min(count, first + rows):
+      result.targets.add target(UiRect(x: 16, y: 128 + (item - first) * ListRowStep,
+        width: width - 32, height: ListRowHeight),
+        if item == 0: UseSpeakerAudio else: SelectBluetoothDevice, item - 1)
+    let buttonWidth = (width - 48) div 3
+    for position, action in [ScanBluetooth, PowerBluetooth, ShowSettings]:
+      result.targets.add target(UiRect(x: 16 + position * (buttonWidth + 8),
+        y: height - 60, width: buttonWidth, height: 38), action)
+  of BluetoothDevicePage:
+    let
+      actions = state.bluetooth.bluetoothActions()
+      rows = max(1, (height - 174) div ListRowStep)
+      selection = clamp(state.bluetooth.action, 0, actions.high)
+      first = max(0, selection - rows + 1)
+    for item in first ..< min(actions.len, first + rows):
+      result.targets.add target(UiRect(x: 16, y: 128 + (item - first) * ListRowStep,
+        width: width - 32, height: ListRowHeight), actions[item], item)
+  of BluetoothPromptPage, BluetoothForgetPage:
+    let footer = themeLayout(state.theme, width, height, 0, 0)
+    result.targets.add target(footer.play, if state.page == BluetoothForgetPage:
+      ReturnBluetooth else: RejectBluetoothPrompt)
+    if state.page == BluetoothForgetPage or state.bluetooth.state.prompt.kind == ConfirmPrompt:
+      result.targets.add target(footer.tools, if state.page == BluetoothForgetPage:
+        ConfirmForgetBluetooth else: AcceptBluetoothPrompt)
+  of AudioUnavailablePage:
+    let
+      top = if height < 300: 128 else: 150
+      rowHeight = if height < 300: 28 else: 38
+    for position, action in [RetryAudio, SpeakerAudio, CancelAudio]:
+      result.targets.add target(UiRect(x: 16, y: top + position * (rowHeight + 8),
+        width: width - 32, height: rowHeight), action, position)
   of WifiPage:
     let
       footer = themeLayout(state.theme, width, height, 0, 0)
@@ -240,6 +308,12 @@ proc moveSelection*(state: var LibraryViewState, index: LibraryIndex,
   of PowerPage, ConflictPage: state.confirmYes = direction > 0
   of SettingsPage: state.setting = clamp(state.setting + direction, 0, SettingsActions.high)
   of WifiPage: state.wifi.selected = clamp(state.wifi.selected + direction, 0, max(0, state.wifi.networks.high))
+  of BluetoothPage:
+    state.bluetooth.selected = clamp(state.bluetooth.selected + direction, 0, state.bluetooth.state.devices.len)
+  of BluetoothDevicePage:
+    state.bluetooth.action = clamp(state.bluetooth.action + direction, 0, state.bluetooth.bluetoothActions().high)
+  of BluetoothPromptPage, BluetoothForgetPage: state.bluetooth.confirm = direction > 0
+  of AudioUnavailablePage: state.bluetooth.action = clamp(state.bluetooth.action + direction, 0, 2)
   else: discard
 
 proc keyboardArea*(width, height: int): Rect =
@@ -261,6 +335,20 @@ proc selectedTarget*(state: LibraryViewState): ViewTarget =
     result = if state.wifi.networks.len > 0:
       ViewTarget(action: SelectWifiNetwork, index: state.wifi.selected) else: ViewTarget(action: RescanWifi)
   of WifiConfirmPage: result.action = ConnectWifi
+  of BluetoothPage:
+    result = ViewTarget(action: if state.bluetooth.selected == 0: UseSpeakerAudio else: SelectBluetoothDevice,
+      index: state.bluetooth.selected - 1)
+  of BluetoothDevicePage:
+    let actions = state.bluetooth.bluetoothActions()
+    let selection = clamp(state.bluetooth.action, 0, actions.high)
+    result = ViewTarget(action: actions[selection], index: selection)
+  of BluetoothPromptPage:
+    result.action = if state.bluetooth.confirm and state.bluetooth.state.prompt.kind == ConfirmPrompt:
+      AcceptBluetoothPrompt else: RejectBluetoothPrompt
+  of BluetoothForgetPage:
+    result.action = if state.bluetooth.confirm: ConfirmForgetBluetooth else: ReturnBluetooth
+  of AudioUnavailablePage:
+    result.action = [RetryAudio, SpeakerAudio, CancelAudio][clamp(state.bluetooth.action, 0, 2)]
   else: discard
 
 proc beginAppearance*(state: var LibraryViewState) =
@@ -501,9 +589,97 @@ proc drawWifi(ui: LibraryUi, image: Image, state: LibraryViewState,
     view.keyboard.render(image, view.keyboard.keyboardLayout(area), ui.text.font,
       keyboardTheme(p))
   else: discard
-  if view.message.len > 0 and state.page != WifiPasswordPage:
+  if view.message.len > 0 and state.page notin {SettingsPage, WifiPasswordPage}:
     ui.label(image, shortText(view.message, max(10, (width - 32) div 8)), 16, height - 20, 14,
       if view.error: 0xc95138'u32 else: p.muted)
+
+proc drawBluetooth(ui: LibraryUi, image: Image, state: LibraryViewState,
+    areas: PageLayout, detailsScreen: bool) =
+  ## Share Bluetooth state across themes while keeping touch controls below.
+  let
+    view = state.bluetooth
+    device = view.bluetoothDevice()
+    p = ui.palette
+    width = image.width
+    height = image.height
+    characters = max(12, (width - 48) div 9)
+    status = if not view.state.available: "Bluetooth unavailable"
+      elif not view.state.powered: "Bluetooth off"
+      elif view.state.discovering: "Scanning…" else: "Bluetooth on"
+    output = if view.audioAddress.len == 0: "Speakers" else: view.audioName
+    message = if view.message.len > 0: view.message
+      elif view.state.error.len > 0: view.state.error else: view.state.message
+  if detailsScreen:
+    ui.label(image, "BLUETOOTH", 24, 88, 25, p.accent)
+    var y = 138
+    var lines = @[status, "New apps use: " & output]
+    if device.address.len > 0:
+      lines.add @[device.name, device.address,
+        if device.connected: "Connected" elif device.paired: "Paired" else: "Not paired",
+        if device.audioReady: "Headphone audio ready" elif device.gamepadReady:
+          "Controller input ready" else: "No active audio/input profile"]
+      if device.batteryPercent >= 0: lines.add "Device battery: " & $device.batteryPercent & "%"
+    if state.page in {BluetoothPromptPage, BluetoothKeyboardPage}:
+      lines.add view.state.prompt.text
+      if view.state.prompt.code.len > 0: lines.add view.state.prompt.code
+    if message.len > 0: lines.add message
+    for line in lines:
+      for wrapped in line.wrapWords(characters).splitLines():
+        if y < height - 36:
+          ui.label(image, wrapped, 24, y, 17, p.text)
+          y += 25
+    return
+  case state.page
+  of BluetoothPage:
+    ui.label(image, "Bluetooth", 24, 78, 22, p.accent)
+    ui.label(image, shortText(status & " · Audio: " & output, characters), 24, 106, 14, p.muted)
+    for item in areas.targets:
+      let text = case item.action
+        of UseSpeakerAudio: "Use speakers for new apps"
+        of SelectBluetoothDevice:
+          let entry = view.state.devices[item.index]
+          (if entry.connected: "• " elif entry.paired: "✓ " else: "") &
+            (if entry.name.len > 0: entry.name else: entry.address)
+        of ScanBluetooth: "X: Scan"
+        of PowerBluetooth: (if view.state.powered: "Y: Turn off" else: "Y: Turn on")
+        else: "Back"
+      ui.button(image, item, text, (item.action == UseSpeakerAudio and view.selected == 0) or
+        (item.action == SelectBluetoothDevice and item.index + 1 == view.selected))
+  of BluetoothDevicePage:
+    ui.label(image, shortText(device.name, characters), 24, 80, 22, p.accent)
+    let connection = if device.audioReady: "Headphone audio ready"
+      elif device.gamepadReady: "Controller input ready"
+      elif device.connected: "Connected; profile not ready"
+      elif device.paired: "Paired; disconnected" else: "Not paired"
+    ui.label(image, shortText(connection, characters), 24, 108, 14, p.muted)
+    for item in areas.targets:
+      let text = if item.action == ConnectBluetooth and not device.paired: "Pair and connect"
+        else: ActionLabels[item.action]
+      ui.button(image, item, text, item.index == view.action)
+  of BluetoothKeyboardPage:
+    view.keyboard.render(image, view.keyboard.keyboardLayout(keyboardArea(width, height)),
+      ui.text.font, keyboardTheme(p))
+  of BluetoothPromptPage, BluetoothForgetPage:
+    ui.label(image, if state.page == BluetoothForgetPage: "Forget this device?"
+      elif view.state.prompt.kind == ConfirmPrompt:
+        (if view.state.prompt.code.len > 0: "Do both codes match?" else: "Allow this device?")
+      else: "Enter this on your device", 24, 82, if width < 500: 20 else: 25, p.accent)
+    ui.label(image, if state.page == BluetoothForgetPage: shortText(device.name, characters)
+      elif view.state.prompt.code.len > 0: view.state.prompt.code
+      else: shortText(view.state.prompt.text, characters), 24, 124, 25, p.text)
+    for item in areas.targets:
+      let affirmative = item.action in {ConfirmForgetBluetooth, AcceptBluetoothPrompt}
+      ui.button(image, item, if affirmative: "Confirm" else: "Cancel",
+        affirmative == view.confirm)
+  of AudioUnavailablePage:
+    ui.label(image, "Headphones unavailable", 24, 77, if width < 500: 20 else: 24, p.accent)
+    ui.label(image, shortText(message, characters), 24, 108, 14, p.muted)
+    for item in areas.targets:
+      ui.button(image, item, ActionLabels[item.action], item.index == view.action)
+  else: discard
+  if message.len > 0 and state.page notin {BluetoothKeyboardPage, AudioUnavailablePage}:
+    ui.label(image, shortText(message, max(12, (width - 32) div 8)), 16, height - 20, 14,
+      if view.state.error.len > 0: 0xc95138'u32 else: p.muted)
 
 proc renderLibrary*(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex,
     state: LibraryViewState, power: PowerStatus, width, height: int,
@@ -565,6 +741,9 @@ proc renderLibrary*(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex,
       ui.label(result, "A: Open   Start: Menu   B: Games", 16, height - 52, 14, p.muted)
   elif state.page in {SettingsPage, WifiPage, WifiConfirmPage, WifiPasswordPage}:
     ui.drawWifi(result, state, areas, width, height, detailsScreen)
+  elif state.page in {BluetoothPage, BluetoothDevicePage, BluetoothPromptPage,
+      BluetoothKeyboardPage, BluetoothForgetPage, AudioUnavailablePage}:
+    ui.drawBluetooth(result, state, areas, detailsScreen)
   elif detailsScreen or state.page == GamePage:
     ui.drawDetails(result, paths, game)
     if state.page == GamePage and not detailsScreen:
@@ -661,7 +840,8 @@ proc renderLibrary*(ui: LibraryUi, paths: LibraryPaths, index: LibraryIndex,
       "Both versions will be preserved.", 24, 144, 16, p.muted)
     for position, item in areas.targets:
       ui.button(result, item, ActionLabels[item.action], (position == 1) == state.confirmYes)
-  if state.message.len > 0 and state.page notin {PairPage, AppearancePage, WifiPage,
-      WifiConfirmPage, WifiPasswordPage}:
+  if state.message.len > 0 and state.page notin {PairPage, AppearancePage, SettingsPage, WifiPage,
+      WifiConfirmPage, WifiPasswordPage, BluetoothPage, BluetoothDevicePage,
+      BluetoothPromptPage, BluetoothKeyboardPage, BluetoothForgetPage, AudioUnavailablePage}:
     ui.label(result, shortText(state.message.splitLines()[0], max(10, (width - 32) div 8)),
       16, height - 20, 14, if state.error: 0xc95138'u32 else: p.muted)

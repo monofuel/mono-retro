@@ -1,7 +1,8 @@
 import
   std/[json, monotimes, os, posix, strformat, times],
   paddy, windy,
-  retro/[audio, display, gamepad, hardwareaudio, input, pattern, settings, touch]
+  retro/[audio, audioroute, display, gamepad, hardwareaudio, input, pattern, settings,
+    systemvolume, touch]
 
 const
   Help = """Usage: hwtest [test|info|input|audio|calibrate] [options]
@@ -336,13 +337,19 @@ proc main() =
     return
   posix.signal(SIGINT, stopHandler)
   posix.signal(SIGTERM, stopHandler)
+  let route = openAudioRoute(settings)
+  defer: route.close()
+  let volume = if settings.command in ["test", "audio", "calibrate"]:
+      openSystemVolume(route.settings) else: nil
+  defer: volume.close()
   if settings.command == "audio":
     if settings.muted: return
-    let audio = AudioTest(device: settings.audioDevice)
+    let audio = AudioTest(device: route.settings.audioDevice)
     defer: audio.close()
     audio.play()
     while audio.completed == 0 and not stopping:
       audio.poll()
+      discard volume.poll(getMonoTime().ticks)
       sleep(20)
     return
   var
@@ -394,7 +401,7 @@ proc main() =
     putEnv("ALSOFT_CONF", "/etc/mono-retro/alsoft.conf")
   let audio = if settings.command == "test":
     newHardwareAudio(settings.muted, settings.microphoneEnabled,
-      gainDb = settings.microphoneGainDb) else: nil
+      gainDb = settings.microphoneGainDb, headphones = route.headphones) else: nil
   defer: audio.close()
   let started = getMonoTime()
   var
@@ -410,6 +417,7 @@ proc main() =
   defer:
     if settings.gamepad == "paddy": closeGamepads()
   while not stopping and (getMonoTime() - started).inSeconds < settings.seconds:
+    discard volume.poll(getMonoTime().ticks)
     if fb != nil and not fb.poll(): break
     if settings.command == "test" and fb != nil and fb.window().buttonPressed[KeyEnter]:
       audio.play()

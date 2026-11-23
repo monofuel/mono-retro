@@ -10,6 +10,7 @@ let
     alsa-lib
     openal
     openssl
+    dbus
     xorg.libX11
     xorg.libXcursor
     libglvnd
@@ -17,7 +18,7 @@ let
   ];
 in
 pkgs.mkShell {
-  packages = [ pkgs.gnumake pkgs.xorg.xorgserver ];
+  packages = [ pkgs.gnumake pkgs.pkg-config pkgs.xorg.xorgserver ];
   buildInputs = runtime;
   LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtime;
   NIX_LDFLAGS = "-rpath ${pkgs.lib.makeLibraryPath runtime}";

@@ -15,7 +15,7 @@ RG DS Plus, with X11 support for desktop development and play.
 RG DS Plus layout previews, with both screens stacked in each image.
 
 - **Launcher:** open games and the hardware tester, view system and battery
-  information, reboot or shut down.
+  information, choose Wi-Fi and Bluetooth devices, reboot or shut down.
 - **Player:** run libretro cores with integer scaling, audio, controller input,
   save files and state imports.
 - **Hardware tester:** check displays, buttons, sticks, multitouch and sound,
@@ -53,6 +53,10 @@ The [lock file](nimby.lock) pins public revisions of the
 [Windy](https://github.com/monofuel/windy/tree/monofuel/drm-gpu-player) and
 [Paddy](https://github.com/monofuel/paddy/tree/anbernic-handhelds) forks that
 provide the Linux handheld backends. Device-specific mappings live in mono-retro.
+
+The [Bluetooth settings](docs/bluetooth.md) use BlueZ and BlueALSA through
+the system D-Bus, without a desktop audio service. Headphone playback and external
+controllers are implemented; physical device acceptance is still pending.
 
 For related Nim graphics work, see [Shady](https://github.com/treeform/shady),
 a Nim-to-shader compiler. It is not currently a mono-retro dependency.

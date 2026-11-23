@@ -7,6 +7,13 @@ check:
 	nim check tests/test_touchkeyboard.nim
 	nim check tests/test_wifi.nim
 	nim check src/wificli.nim
+	nim check src/bluetoothcli.nim
+	nim check tests/test_bluetooth.nim
+	nim check tests/test_bluetooth_worker.nim
+	nim check tests/test_bluetooth_view.nim
+	nim check tests/test_playerinput.nim
+	nim check tests/test_audioroute.nim
+	nim check tests/test_playeraudio_route.nim
 	nim check examples/touchkeyboard_demo.nim
 	nim check src/retro/systemvolume.nim
 	nim check src/retro/playerslots.nim
@@ -43,6 +50,11 @@ test:
 	nim r -o:build/test-libraryview tests/test_libraryview.nim
 	nim r -o:build/test-touchkeyboard tests/test_touchkeyboard.nim
 	nim r -o:build/test-wifi tests/test_wifi.nim
+	nim r -o:build/test-bluetooth tests/test_bluetooth.nim
+	nim r -o:build/test-bluetooth-worker tests/test_bluetooth_worker.nim
+	nim r -o:build/test-bluetooth-view tests/test_bluetooth_view.nim
+	nim r -o:build/test-playerinput tests/test_playerinput.nim
+	nim r -o:build/test-audioroute tests/test_audioroute.nim
 	nim r -o:build/test-shipping-profile tests/test_shipping_profile.nim
 	nim r tests/test_hardware.nim
 	nim r tests/test_gamepad.nim
@@ -55,6 +67,7 @@ test-audio:
 	mkdir -p build
 	nim r tests/test_audio_stream.nim
 	ALSOFT_DRIVERS=null nim r -o:build/test-hardwareaudio tests/test_hardwareaudio.nim
+	ALSOFT_DRIVERS=null nim r -o:build/test-playeraudio-route tests/test_playeraudio_route.nim
 build:
 	mkdir -p build
 	nim c -o:build/hwtest src/hwtest.nim
@@ -91,10 +104,12 @@ library-handhelds:
 	MONO_RETRO_TARGET=arm64 nim c -o:build/mono-retro-library-arm64 src/librarycli.nim
 launcher-desktop: desktop library-desktop
 	nim c -o:build/mono-retro-wifi src/wificli.nim
+	nim c -o:build/mono-retro-bluetooth src/bluetoothcli.nim
 	MONO_RETRO_BACKENDS=x11 nim c -o:build/mono-retro src/launcher.nim
 	cp build/hwtest-desktop build/mono-retro-hwtest
 launcher-handhelds: handhelds library-handhelds
 	MONO_RETRO_TARGET=arm64 nim c -o:build/mono-retro-wifi-arm64 src/wificli.nim
+	MONO_RETRO_TARGET=arm64 nim c -o:build/mono-retro-bluetooth-arm64 src/bluetoothcli.nim
 	MONO_RETRO_TARGET=arm64 MONO_RETRO_BACKENDS=fbdev,drm nim c -o:build/mono-retro-arm64 src/launcher.nim
 	cp build/hwtest-handhelds build/mono-retro-hwtest-arm64
 
@@ -104,6 +119,13 @@ test-launcher-x11: launcher-desktop
 
 test-library-x11: launcher-desktop
 	nim r tests/integration_library_x11.nim
+
+.PHONY: test-bluetooth-bus test-bluetooth-x11
+test-bluetooth-bus:
+	mkdir -p build
+	nim r -o:build/test-bluetooth-bus tests/test_bluetooth_bus.nim
+test-bluetooth-x11: launcher-desktop
+	nim r -o:build/integration-bluetooth-x11 tests/integration_bluetooth_x11.nim
 
 .PHONY: player-desktop player-rg-sp player-rg-ds-plus player-fixtures test-player test-player-x11
 player-desktop:

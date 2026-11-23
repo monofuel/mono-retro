@@ -1,7 +1,7 @@
 import
   std/[monotimes, os, parseopt, posix, strutils, times],
   paddy, pixie, windy,
-  retro/[anbernic, display, gamepad, input, libretro, playeraudio, playerclock, playerds, playergpu,
+  retro/[anbernic, audioroute, display, gamepad, input, libretro, playeraudio, playerclock, playerds, playergpu,
     playerinput, playeroverlay, playerprofile, playerslots, playervideo, playerworker, settings,
     systemvolume, volumeui]
 
@@ -155,6 +155,8 @@ proc main() =
     if noInput: raise newException(ValueError, "Walking benchmark cannot use --no-input")
   let dual = selectDualScreen(dsLayout, earthboundDs, viewportWidth, viewportHeight)
   var settings = parseSettings(displayArguments, detectDevice())
+  let route = openAudioRoute(settings)
+  defer: route.close()
   let desktop = settings.displayBackend() == "x11"
   let desktopGpu = desktop and videoMode != CpuVideo
   validateDsDisplay(dual.layout, settings.displayBackend(), settings.outputs.len)
@@ -210,7 +212,7 @@ proc main() =
   initGamepads()
   defer: closeGamepads()
   let
-    volume = openSystemVolume(settings)
+    volume = openSystemVolume(route.settings)
     volumeUi = newVolumeUi()
     stateStore = newStateStore(saveDirectory, romPath, corePath, captureDirectory, screenstateDirectory)
   defer: volume.close()
@@ -224,7 +226,9 @@ proc main() =
     for device in backInputs: device.close()
   var sound: PlayerAudio
   defer: sound.close()
-  if not muted: sound = newPlayerAudio(session.av.timing.sampleRate, settings.audioPrebufferMs)
+  if not muted:
+    sound = newPlayerAudio(session.av.timing.sampleRate, settings.audioPrebufferMs,
+      headphones = route.headphones)
   posix.signal(SIGINT, stopHandler)
   posix.signal(SIGTERM, stopHandler)
   echo "Core: ", session.libraryName, " ", session.libraryVersion
@@ -251,6 +255,7 @@ proc main() =
     fastForwarding = false
     pendingVideoChange = false
     exitHeld = false
+    exitController = -1
     exitStarted: MonoTime
     stylus: DsStylus
     companionGesture: CompanionGesture
@@ -410,7 +415,7 @@ proc main() =
     measured(Events): pads = pollGamepads()
     for pad in pads.mitems: pad = pad.mapAnbernic()
     let
-      pad = firstGamepad(pads)
+      exitPad = playerExitController(pads)
       now = getMonoTime()
     var rawBackPressed, rawBackHeld: bool
     for device in backInputs:
@@ -426,14 +431,15 @@ proc main() =
       if changed or volumeImage == nil:
         volumeImage = volumeUi.renderVolume(volume.percent, volume.error, 200, volumeImage)
       overlay.setVolumeOverlay(volumeImage, volume.visible(now.ticks), volume.revision)
-    if pad.button(GamepadSelect) and pad.button(GamepadStart):
-      if not exitHeld: exitStarted = now
+    if exitPad >= 0:
+      if not exitHeld or exitPad != exitController: exitStarted = now
       exitHeld = true
+      exitController = exitPad
       if (now - exitStarted).inSeconds >= ExitHoldSeconds: break
     else:
       exitHeld = false
     if not noInput and not suppressButtons and not overlay.isOpen and not desktop and
-        dual.layout == NoDsLayout and screen.count() > 1 and pad.buttonPressed(GamepadL2):
+        dual.layout == NoDsLayout and screen.count() > 1 and playerButtonPressed(pads, GamepadL2):
       if gpu == nil:
         screen.window(activeScreen).presentPixels(black[activeScreen])
         blanked[activeScreen] = true
@@ -450,8 +456,8 @@ proc main() =
       window = screen.window(inputScreen)
       size = window.framebufferSize
     let capturePressed = (window.buttonPressed[KeyF12] or
-      pad.buttonPressed(GamepadMisc0)) and not captureHeld
-    captureHeld = window.buttonDown[KeyF12] or pad.button(GamepadMisc0)
+      playerButtonPressed(pads, GamepadMisc0)) and not captureHeld
+    captureHeld = window.buttonDown[KeyF12] or playerButton(pads, GamepadMisc0)
     if capturePressed and session.captureDirectory.len > 0:
       try:
         session.capture()
@@ -463,7 +469,7 @@ proc main() =
       if window.buttonDown[key]: held.incl key
     if window.buttonDown[KeyTab]: held.incl KeyTab
     let controls = playerControls(held, pads)
-    var controlsHeld = gamepadButtons(pads) != 0 or pad.button(GamepadHome) or rawBackHeld
+    var controlsHeld = gamepadButtons(pads) != 0 or playerButton(pads, GamepadHome) or rawBackHeld
     for index in 0 ..< screen.count():
       let target = screen.window(index)
       controlsHeld = controlsHeld or target.buttonDown[KeyF1] or target.buttonDown[KeyEscape] or
@@ -474,19 +480,17 @@ proc main() =
       suppressButtons = false
       overlayInputArmed = true
     let
-      activateButton = physicalButton(pad.name, "A")
-      backButton = physicalButton(pad.name, "B")
-      togglePressed = (window.buttonPressed[KeyF1] or pad.buttonPressed(GamepadHome)) and not toggleHeld
-      activatePressed = (window.buttonPressed[KeyEnter] or pad.buttonPressed(activateButton)) and not activateHeld
-      backPressed = (window.buttonPressed[KeyEscape] or pad.buttonPressed(backButton) or rawBackPressed) and not backHeld
-      menuStick = pad.leftStickYUp()
+      togglePressed = (window.buttonPressed[KeyF1] or playerButtonPressed(pads, GamepadHome)) and not toggleHeld
+      activatePressed = (window.buttonPressed[KeyEnter] or playerPhysicalButton(pads, "A", true)) and not activateHeld
+      backPressed = (window.buttonPressed[KeyEscape] or playerPhysicalButton(pads, "B", true) or rawBackPressed) and not backHeld
+      menuStick = playerMenuStick(pads)
       stickPrevious = menuStickReady and menuStick >= 0.6'f32
       stickNext = menuStickReady and menuStick <= -0.6'f32
     if abs(menuStick) < 0.3'f32: menuStickReady = true
     elif stickPrevious or stickNext: menuStickReady = false
-    toggleHeld = window.buttonDown[KeyF1] or pad.button(GamepadHome)
-    activateHeld = window.buttonDown[KeyEnter] or pad.button(activateButton)
-    backHeld = window.buttonDown[KeyEscape] or pad.button(backButton) or rawBackHeld
+    toggleHeld = window.buttonDown[KeyF1] or playerButton(pads, GamepadHome)
+    activateHeld = window.buttonDown[KeyEnter] or playerPhysicalButton(pads, "A")
+    backHeld = window.buttonDown[KeyEscape] or playerPhysicalButton(pads, "B") or rawBackHeld
     if window.buttonPressed[KeyEscape] and not overlay.isOpen and
         (not suppressButtons or noInput):
       break
@@ -497,10 +501,10 @@ proc main() =
         for (pressed, command) in [
           (backPressed, OverlayBack),
           (activatePressed, OverlayActivate),
-          (window.buttonPressed[KeyUp] or pad.buttonPressed(GamepadUp) or stickPrevious, OverlayPrevious),
-          (window.buttonPressed[KeyDown] or pad.buttonPressed(GamepadDown) or stickNext, OverlayNext),
-          (window.buttonPressed[KeyLeft] or pad.buttonPressed(GamepadLeft), OverlayPagePrevious),
-          (window.buttonPressed[KeyRight] or pad.buttonPressed(GamepadRight), OverlayPageNext)]:
+          (window.buttonPressed[KeyUp] or playerButtonPressed(pads, GamepadUp) or stickPrevious, OverlayPrevious),
+          (window.buttonPressed[KeyDown] or playerButtonPressed(pads, GamepadDown) or stickNext, OverlayNext),
+          (window.buttonPressed[KeyLeft] or playerButtonPressed(pads, GamepadLeft), OverlayPagePrevious),
+          (window.buttonPressed[KeyRight] or playerButtonPressed(pads, GamepadRight), OverlayPageNext)]:
           if pressed:
             overlayTransition(overlay.handleOverlay(command))
             break

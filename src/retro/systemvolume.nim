@@ -1,8 +1,8 @@
 ## Shared hardware volume control for profile-owned ALSA mixers and raw volume keys.
 
 import
-  std/[dynlib, json, monotimes, os],
-  ./[input, playersave, settings]
+  std/[dynlib, json, monotimes, os, strutils],
+  ./[audioroute, input, playersave, settings]
 
 type
   SndMixer = object
@@ -117,6 +117,16 @@ proc repeatDue*(state: var RepeatState, pressed: bool, nowNs: int64): bool =
     state.nextRepeatNs += VolumeRepeatIntervalNs
   true
 
+proc mixerDeviceName*(card: string): string =
+  ## Resolve board card identifiers or the exact supported BlueALSA CTL name.
+  if not card.startsWith(BlueAlsaMixerPrefix): return "hw:" & card
+  if card.len != BlueAlsaMixerPrefix.len + 17 + BlueAlsaMixerSuffix.len:
+    raise newException(ValueError, "Invalid Bluetooth volume device")
+  let address = bluetoothAddress(card[BlueAlsaMixerPrefix.len ..< BlueAlsaMixerPrefix.len + 17])
+  if card != BlueAlsaMixerPrefix & address & BlueAlsaMixerSuffix:
+    raise newException(ValueError, "Invalid Bluetooth volume device")
+  card
+
 proc makeAlsaMixer(card: string, controls: seq[string]): VolumeMixer =
   ## Open one profile-owned ALSA card and find each requested simple element.
   var
@@ -124,7 +134,8 @@ proc makeAlsaMixer(card: string, controls: seq[string]): VolumeMixer =
     handle: ptr SndMixer
   try:
     api.checkAlsa("Opening mixer", api.mixerOpen(addr handle, 0))
-    api.checkAlsa("Attaching mixer " & card, api.mixerAttach(handle, ("hw:" & card).cstring))
+    let device = mixerDeviceName(card)
+    api.checkAlsa("Attaching mixer " & card, api.mixerAttach(handle, device.cstring))
     api.checkAlsa("Registering mixer controls", api.mixerRegister(handle, nil, nil))
     api.checkAlsa("Loading mixer controls", api.mixerLoad(handle))
     var elements: seq[ptr SndMixerElem]
@@ -258,6 +269,16 @@ proc openVolumeInputs(volume: SystemVolume, settings: Settings) =
   if volume.inputs.len == 0:
     raise newException(IOError, "Missing volume input device")
 
+proc volumeStatePath*(settings: Settings, basePath = "/var/lib/mono-retro/volume.json"): string =
+  ## Keep each headphone's saved level independent of the existing speaker level.
+  if not settings.volumeCard.startsWith(BlueAlsaMixerPrefix): return basePath
+  discard mixerDeviceName(settings.volumeCard)
+  let
+    address = settings.volumeCard[BlueAlsaMixerPrefix.len ..< BlueAlsaMixerPrefix.len + 17]
+    canonical = bluetoothAddress(address)
+  let parts = basePath.splitFile()
+  parts.dir / (parts.name & "-" & canonical.replace(":", "") & parts.ext)
+
 proc newVolumeFromMixer*(settings: Settings, mixer: VolumeMixer,
     statePath = "/var/lib/mono-retro/volume.json"): SystemVolume =
   ## Build a testable controller around a supplied mixer without opening evdev.
@@ -266,11 +287,12 @@ proc newVolumeFromMixer*(settings: Settings, mixer: VolumeMixer,
   if mixer.minimum.len == 0 or mixer.minimum.len != mixer.maximum.len or
       mixer.readRaw == nil or mixer.writeRaw == nil:
     raise newException(ValueError, "Volume mixer is incomplete")
-  result = SystemVolume(mixer: mixer, statePath: statePath, inverted: settings.volumeInverted)
+  let selectedPath = volumeStatePath(settings, statePath)
+  result = SystemVolume(mixer: mixer, statePath: selectedPath, inverted: settings.volumeInverted)
   try:
     result.percent = result.readPercent()
-    if fileExists(statePath):
-      discard result.setPercent(savedPercent(statePath), 0, false)
+    if fileExists(selectedPath):
+      discard result.setPercent(savedPercent(selectedPath), 0, false)
   except CatchableError as error:
     result.reportError("Opening mixer: " & error.msg)
 

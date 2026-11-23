@@ -41,6 +41,14 @@ mono-retro-wifi status
 mono-retro-wifi scan --cached
 ```
 
+## Bluetooth settings
+
+Open **Menu → Settings → Bluetooth** to scan, pair and manage remembered devices.
+PIN entry uses the shared keyboard. Headphone output applies to the next Player
+or Hardware Test launch; a missing output offers Retry, Use speakers or Cancel.
+See [Bluetooth](bluetooth.md) for provisioning, controller behavior and pending
+hardware acceptance checks.
+
 ## Grimoire
 
 The Grimoire card on the main launch screen, alongside games such as Decompbound,

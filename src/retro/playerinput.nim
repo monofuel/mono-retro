@@ -1,6 +1,6 @@
 import
   paddy, windy,
-  ./[anbernic, touch]
+  ./[anbernic, gamepad, touch]
 
 const
   StickDpadThreshold* = 0.5'f32
@@ -38,20 +38,69 @@ proc firstGamepad*(pads: seq[Gamepad]): Gamepad =
     if pad.id < pads[chosen].id: chosen = index
   pads[chosen]
 
+proc playerGamepads*(pads: seq[Gamepad]): seq[Gamepad] =
+  ## Use the built-in handheld pad and one external pad, or the first desktop pad.
+  var
+    builtIn = -1
+    external = -1
+  for index, pad in pads:
+    if pad.isAnbernicGamepad():
+      if builtIn < 0 or pad.id < pads[builtIn].id: builtIn = index
+    elif external < 0 or pad.id < pads[external].id:
+      external = index
+  if builtIn >= 0: result.add pads[builtIn]
+  if external >= 0: result.add pads[external]
+
+proc playerButton*(pads: seq[Gamepad], button: GamepadButton): bool =
+  ## Read a held button from either selected player-one controller.
+  for pad in playerGamepads(pads):
+    if pad.button(button): return true
+
+proc playerButtonPressed*(pads: seq[Gamepad], button: GamepadButton): bool =
+  ## Read a new press from either selected player-one controller.
+  for pad in playerGamepads(pads):
+    if pad.buttonPressed(button): return true
+
+proc playerExitHeld*(pads: seq[Gamepad]): bool =
+  ## Require Select and Start together on one selected controller for exit.
+  for pad in playerGamepads(pads):
+    if pad.button(GamepadSelect) and pad.button(GamepadStart): return true
+
+proc playerExitController*(pads: seq[Gamepad]): int =
+  ## Keep the exit hold tied to one physical controller across reconnects.
+  for pad in playerGamepads(pads):
+    if pad.button(GamepadSelect) and pad.button(GamepadStart): return pad.id
+  -1
+
+proc playerPhysicalButton*(pads: seq[Gamepad], label: string, pressed = false): bool =
+  ## Apply each controller's own printed confirmation and back-button mapping.
+  for pad in playerGamepads(pads):
+    let button = physicalButton(pad.name, label)
+    if button != GamepadButtonCount and
+        (if pressed: pad.buttonPressed(button) else: pad.button(button)): return true
+
+proc playerMenuStick*(pads: seq[Gamepad]): float32 =
+  ## Use the strongest selected stick for menu navigation without filtering it.
+  for pad in playerGamepads(pads):
+    let value = pad.leftStickYUp()
+    if abs(value) > abs(result): result = value
+
 proc gamepadButtons*(pads: seq[Gamepad]): uint16 =
-  ## Map RetroPad positions and the left stick, preferring digital D-pad axes.
-  let
-    pad = firstGamepad(pads)
-    x = pad.axis(GamepadLStickX)
-    y = pad.leftStickYUp()
-  for index, button in RetroButtons:
-    if pad.button(button): result = result or (1'u16 shl index)
-  if (result and HorizontalDpad) == 0:
-    if x <= -StickDpadThreshold: result = result or (1'u16 shl 6)
-    elif x >= StickDpadThreshold: result = result or (1'u16 shl 7)
-  if (result and VerticalDpad) == 0:
-    if y >= StickDpadThreshold: result = result or (1'u16 shl 4)
-    elif y <= -StickDpadThreshold: result = result or (1'u16 shl 5)
+  ## Combine selected pads, preferring digital D-pad axes and then the built-in stick.
+  let selected = playerGamepads(pads)
+  for pad in selected:
+    for index, button in RetroButtons:
+      if pad.button(button): result = result or (1'u16 shl index)
+  for pad in selected:
+    let
+      x = pad.axis(GamepadLStickX)
+      y = pad.leftStickYUp()
+    if (result and HorizontalDpad) == 0:
+      if x <= -StickDpadThreshold: result = result or (1'u16 shl 6)
+      elif x >= StickDpadThreshold: result = result or (1'u16 shl 7)
+    if (result and VerticalDpad) == 0:
+      if y >= StickDpadThreshold: result = result or (1'u16 shl 4)
+      elif y <= -StickDpadThreshold: result = result or (1'u16 shl 5)
 
 proc keyboardButtons*(held: set[Button]): uint16 =
   ## Map the desktop's documented keyboard controls to the same RetroPad.

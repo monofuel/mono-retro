@@ -1,7 +1,7 @@
 import
   std/math,
   openal, slappy,
-  ./[audio, playermicrophone]
+  ./[audio, playbackcontext, playermicrophone]
 
 type
   HardwareAudio* = ref object
@@ -14,6 +14,8 @@ type
     outputError*, microphoneError*: string
     completed*: int
     gain: float
+    headphones: bool
+    playback: PlaybackContext
 
 const
   MeterFloorDb* = -60.0
@@ -21,6 +23,7 @@ const
   WaveHeaderBytes = 44
   StereoFrameBytes = 4
   MeterWindowMs = 80
+  AlcConnected = 0x313.cint
 
 proc pcmPeak*(bytes: openArray[uint8]): float =
   ## Return the full-scale peak of little-endian signed 16-bit PCM.
@@ -40,11 +43,33 @@ proc meterFraction*(peak: float): float =
   ## Map the audible range from the meter floor to full scale onto a bar.
   (peak.decibels() - MeterFloorDb) / -MeterFloorDb
 
-proc checkOutput() =
+proc checkOutput(audio: HardwareAudio) =
   ## Surface OpenAL playback failures instead of displaying a false output level.
   let error = alGetError()
   if error != AL_NO_ERROR:
     raise newException(IOError, "OpenAL playback error: " & $error)
+  if audio.headphones:
+    let device = alcGetContextsDevice(alcGetCurrentContext())
+    var connected: ALCint
+    alcGetIntegerv(device, AlcConnected, 1, addr connected)
+    let connectionError = alcGetError(device)
+    if connectionError != ALC_NO_ERROR:
+      raise newException(IOError, "Cannot check headphone connection: " & $connectionError)
+    if connected == ALC_FALSE:
+      raise newException(IOError, "Headphones disconnected; audio is muted until the next launch")
+
+proc failOutput(audio: HardwareAudio, message: string) =
+  ## Stop failed playback once while leaving the microphone capture untouched.
+  audio.outputError = message
+  audio.outputPeak = 0
+  audio.playing = false
+  if audio.headphones and audio.initialized:
+    alListenerf(AL_GAIN, 0)
+    if audio.stream != nil: audio.stream.stop()
+    let muteError = alGetError()
+    if muteError != AL_NO_ERROR:
+      audio.outputError.add "; OpenAL stop error: " & $muteError
+  stderr.writeLine("Audio output unavailable: " & audio.outputError)
 
 proc close*(audio: HardwareAudio) =
   ## Release capture and playback independently, including partial initialization.
@@ -63,14 +88,16 @@ proc close*(audio: HardwareAudio) =
           audio.stream.close()
           audio.stream = nil
       finally:
-        discard alcMakeContextCurrent(nil)
-        slappyClose()
+        if audio.playback != nil: audio.playback.close()
+        else:
+          discard alcMakeContextCurrent(nil)
+          slappyClose()
 
 proc newHardwareAudio*(muted = false, microphoneEnabled = true,
-    factory: MicrophoneFactory = nil, gainDb = 0): HardwareAudio =
+    factory: MicrophoneFactory = nil, gainDb = 0, headphones = false): HardwareAudio =
   ## Start live capture; playback opens only on a requested tone and never monitors the mic.
   result = HardwareAudio(muted: muted, microphoneEnabled: microphoneEnabled,
-    gain: microphoneGainFactor(gainDb))
+    gain: microphoneGainFactor(gainDb), headphones: headphones)
   if microphoneEnabled:
     try:
       let createCapture = if factory == nil: slappyCapture else: factory
@@ -91,21 +118,23 @@ proc play*(audio: HardwareAudio) =
   if audio == nil or audio.muted or audio.playing or audio.outputError.len > 0: return
   try:
     if not audio.initialized:
-      slappyInit()
+      if audio.headphones: audio.playback = openPlaybackContext()
+      else: slappyInit()
       audio.initialized = true
+      if audio.headphones and
+          not alcIsExtensionPresent(alcGetContextsDevice(alcGetCurrentContext()), "ALC_EXT_disconnect"):
+        raise newException(IOError, "OpenAL cannot monitor headphone disconnection")
       audio.stream = newStreamingSource(SampleRate, 2, 16)
-      checkOutput()
+      audio.checkOutput()
       let wave = toneWave()
       audio.tone = newSeq[uint8](wave.len - WaveHeaderBytes)
       copyMem(addr audio.tone[0], unsafeAddr wave[WaveHeaderBytes], audio.tone.len)
     audio.stream.flush()
     audio.stream.queueData(audio.tone)
-    checkOutput()
+    audio.checkOutput()
     audio.playing = true
   except CatchableError as error:
-    audio.outputError = error.msg
-    audio.outputPeak = 0
-    stderr.writeLine("Speaker output unavailable: " & error.msg)
+    audio.failOutput(error.msg)
 
 proc poll*(audio: HardwareAudio) =
   ## Measure recent output PCM and drain live microphone PCM without saving or playing it.
@@ -123,11 +152,9 @@ proc poll*(audio: HardwareAudio) =
         audio.playing = false
         inc audio.completed
         audio.stream.pump()
-      checkOutput()
+      audio.checkOutput()
     except CatchableError as error:
-      audio.outputError = error.msg
-      audio.outputPeak = 0
-      stderr.writeLine("Speaker output unavailable: " & error.msg)
+      audio.failOutput(error.msg)
   if audio.capture != nil:
     try:
       var remaining = audio.capture.available()

@@ -1,6 +1,9 @@
-import paddy
+import
+  paddy
 
 const
+  AnbernicGamepadNames* = ["ANBERNIC-keys", "ANBERNIC-rk3568-keys",
+    "retrogame_joypad"]
   ButtonMapping = [
     (GamepadA, GamepadB),
     (GamepadB, GamepadA),
@@ -19,6 +22,10 @@ const
     (GamepadRight, GamepadRight)
   ]
 
+proc isAnbernicGamepad*(pad: Gamepad): bool =
+  ## Identify the built-in controllers supported by the handheld mappings.
+  pad.name in AnbernicGamepadNames
+
 proc remapButtons(buttons: uint64, dsPlus: bool): uint64 =
   ## Translate the vendor driver's assignments after Paddy's generic mapping.
   for (source, target) in ButtonMapping:
@@ -33,7 +40,7 @@ proc mapAnbernic*(pad: Gamepad): Gamepad =
     result = pad
     result.axes[GamepadLStickY.int] = -pad.axis(GamepadLStickY)
     return
-  if pad.name notin ["ANBERNIC-keys", "ANBERNIC-rk3568-keys"]:
+  if not pad.isAnbernicGamepad():
     return pad
   let dsPlus = pad.name == "ANBERNIC-rk3568-keys"
   result = Gamepad(id: pad.id, name: pad.name,

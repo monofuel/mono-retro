@@ -23,6 +23,11 @@ if windySource.len > 0:
 switch("define", "useCpu")
 switch("define", "ssl")
 switch("define", "windyBackends=" & getEnv("MONO_RETRO_BACKENDS", "x11"))
+if projectName() == "bluetoothcli" or projectName().startsWith("test_bluetooth") or
+    projectName().startsWith("integration_bluetooth"):
+  let dbusFlags = getEnv("MONO_RETRO_DBUS_CFLAGS")
+  switch("passC", if dbusFlags.len > 0: dbusFlags else: staticExec("pkg-config --cflags dbus-1"))
+  switch("passL", "-ldbus-1")
 if getEnv("MONO_RETRO_TARGET") == "arm64":
   switch("cpu", "arm64")
   switch("gcc.exe", getEnv("MONO_RETRO_CC", "aarch64-unknown-linux-gnu-gcc"))
