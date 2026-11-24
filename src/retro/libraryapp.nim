@@ -21,6 +21,8 @@ const
   WifiConnectTimeoutSeconds = 45
   WifiPasswordLimit = 64
   AudioReadyWaitSeconds = 15
+  DoubleClickMilliseconds = 400
+  DoubleClickDistance = 12'f32
 
 proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     duration: int, stopping: proc(): bool, themeOverride = "") =
@@ -61,6 +63,9 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     navigationHeld = -1
     navigationRepeat = getMonoTime()
     mouseHeld = false
+    lastMouseGame: string
+    lastMouseClick: MonoTime
+    lastMousePosition: Vec2
     pointerStart: Vec2
     pointerLast: Vec2
     pointerId = -1'i32
@@ -326,8 +331,8 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     state.filter = clamp(state.filter, 0, index.filters().high)
     state.selected = clamp(state.selected, 0, max(0, index.visibleGames(state.filter).high))
 
-  proc pointer(phase: TouchPhase, point: Vec2, screenIndex: int, id = 0'i32) =
-    ## Select covers on tap and require a separate Play action to launch.
+  proc pointer(phase: TouchPhase, point: Vec2, screenIndex: int, id = 0'i32, mouse = false) =
+    ## Highlight tapped covers and launch the same highlighted cover on a desktop double-click.
     if screen.count() > 1 and screenIndex == 0: return
     if state.page in {WifiPasswordPage, BluetoothKeyboardPage} and screenIndex == screen.count() - 1:
       if phase == TouchBegin and pointerId == -1:
@@ -356,8 +361,27 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     elif phase in {TouchEnd, TouchCancel} and pointerScreen == screenIndex and pointerId == id:
       pointerId = -1
       pointerScreen = -1
-      if phase == TouchCancel or pointerDragged or abs(point.y - pointerStart.y) > 20: return
-      let item = state.pageLayout(index, screen.width(screenIndex), screen.height(screenIndex)).hitTarget(point)
+      if phase == TouchCancel or pointerDragged or abs(point.y - pointerStart.y) > 20 or
+          (mouse and abs(point.x - pointerStart.x) > 20):
+        if mouse: lastMouseGame = ""
+        return
+      var item = state.pageLayout(index, screen.width(screenIndex), screen.height(screenIndex)).hitTarget(point)
+      if mouse:
+        if item.action == SelectGame:
+          let
+            hash = index.visibleGames(state.filter)[item.index].hash
+            clicked = getMonoTime()
+          if hash == lastMouseGame and item.index == state.selected and
+              (clicked - lastMouseClick).inMilliseconds <= DoubleClickMilliseconds and
+              (point - lastMousePosition).length <= DoubleClickDistance:
+            item.action = PlayGame
+            lastMouseGame = ""
+          else:
+            lastMouseGame = hash
+            lastMouseClick = clicked
+            lastMousePosition = point
+        else:
+          lastMouseGame = ""
       if item.action != NoViewAction:
         pendingTargets.add item
         pending.add ActivateTarget
@@ -388,6 +412,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     pendingTargets.setLen(0)
     armed = false
     mouseHeld = false
+    lastMouseGame = ""
     pointerId = -1
     dirty = true
     refreshAudioSelection()
@@ -876,7 +901,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
           mouseHeld = true
         if mouseHeld: pointer(TouchMove, window.mousePos.vec2, screenIndex)
         if mouseHeld and window.buttonReleased[MouseLeft]:
-          pointer(TouchEnd, window.mousePos.vec2, screenIndex)
+          pointer(TouchEnd, window.mousePos.vec2, screenIndex, mouse = true)
           mouseHeld = false
         if window.scrollDelta.y != 0:
           pending.add (if window.scrollDelta.y > 0: MoveUp else: MoveDown)
