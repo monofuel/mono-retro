@@ -1033,6 +1033,7 @@ proc runLibrary*(root, configPath: string, displayArguments: seq[string],
     if state.transition < 1:
       state.transition = min(1'f32, (getMonoTime() - transitionStarted).inMilliseconds.float32 / 140)
       dirty = true
+    if screen.takeRedraw(): dirty = true
     if dirty:
       let lines = localSystem() & power.powerLines() & localNetwork()
       for screenIndex in 0 ..< screen.count():

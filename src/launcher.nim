@@ -292,6 +292,7 @@ proc main() =
       if sizes[index] != screen.window(index).framebufferSize:
         sizes[index] = screen.window(index).framebufferSize
         dirty = true
+    if screen.takeRedraw(): dirty = true
     if dirty:
       state.scroll = clamp(state.scroll, 0, maxScroll)
       var lines = @["Device: " & settings.title] & identity

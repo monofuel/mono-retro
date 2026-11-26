@@ -7,6 +7,7 @@ type
   Display* = ref object
     windows: seq[Window]
     backend: string
+    redraw: bool
     touch*: TouchState
 
 proc displayBackend*(settings: Settings): string =
@@ -24,6 +25,10 @@ proc close*(display: Display) =
       errors.add error.msg
     finally:
       window.onTouch = nil
+      when HasX11:
+        window.onRefresh = nil
+        window.onResize = nil
+        window.onFocusChange = nil
   display.windows.setLen(0)
   if errors.len > 0:
     raise newException(IOError, errors.join("; "))
@@ -31,7 +36,7 @@ proc close*(display: Display) =
 proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480),
     windowTitles: seq[string] = @[], vsync = false,
     windowSizes: seq[IVec2] = @[], gpuPixels = false): Display =
-  result = Display(backend: settings.displayBackend())
+  result = Display(backend: settings.displayBackend(), redraw: true)
   let display = result
   let backend = case result.backend
     of "x11": X11Backend
@@ -61,6 +66,12 @@ proc openDisplay*(settings: Settings, initialSize = ivec2(720, 480),
       let window = newWindow(title, size, vsync = vsync,
         linuxOptions = options)
       display.windows.add window
+      when HasX11:
+        if backend == X11Backend:
+          let invalidate = proc() = display.redraw = true
+          window.onRefresh = invalidate
+          window.onResize = invalidate
+          window.onFocusChange = invalidate
       let framebufferSize = window.framebufferSize
       if index == 1:
         display.touch = TouchState(enabled: options.touchDevice.len > 0,
@@ -102,7 +113,14 @@ proc poll*(display: Display, escapeCloses = true): bool =
   true
 
 proc present*(display: Display, canvas: Canvas, index = 0) =
+  when HasX11:
+    if display.backend == "x11" and not display.windows[index].visible: return
   display.windows[index].presentPixels(canvas)
+
+proc takeRedraw*(display: Display): bool =
+  ## Consume window-system damage once without refreshing continuously while idle.
+  result = display.redraw
+  display.redraw = false
 
 proc describe*(display: Display, index: int): string =
   display.backend & " " & $display.width(index) & "x" & $display.height(index)

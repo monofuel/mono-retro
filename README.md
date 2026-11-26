@@ -50,7 +50,7 @@ mono-retro builds on Treeform and Guzba's libraries:
 | [Nimby](https://github.com/treeform/nimby) | Dependency management. |
 
 The [lock file](nimby.lock) pins public revisions of the
-[Windy](https://github.com/monofuel/windy/tree/monofuel/drm-gpu-player) and
+[Windy](https://github.com/monofuel/windy/tree/monofuel/x11-refresh) and
 [Paddy](https://github.com/monofuel/paddy/tree/anbernic-handhelds) forks that
 provide the Linux handheld backends. Device-specific mappings live in mono-retro.
 

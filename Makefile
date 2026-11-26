@@ -7,6 +7,7 @@ check:
 	nim check tests/test_power_sources.nim
 	nim check tests/test_desktop_power.nim
 	nim check tests/test_power_cli.nim
+	nim check tests/test_display_repaint.nim
 	nim check tests/test_touchkeyboard.nim
 	nim check tests/test_wifi.nim
 	nim check src/wificli.nim
@@ -125,6 +126,11 @@ test-launcher-x11: launcher-desktop
 .PHONY: test-power-cli
 test-power-cli: launcher-desktop
 	nim r -o:build/test-power-cli tests/test_power_cli.nim build/mono-retro
+
+.PHONY: test-display-repaint
+test-display-repaint:
+	mkdir -p build
+	nim r -o:build/test-display-repaint tests/test_display_repaint.nim
 
 test-library-x11: launcher-desktop
 	nim r tests/integration_library_x11.nim

@@ -27,6 +27,14 @@ Missing or invalid charge remains unavailable rather than becoming zero.
 `mono-retro --power-status` prints the same selected source as JSON without
 opening windows or input/audio devices.
 
+The X11 menu repaints on exposure, resize, remapping and focus changes, even
+while unfocused. Hidden windows skip presentation and repaint current contents
+when restored; idle polling does not continuously redraw. The CPU presentation
+path has no OpenGL viewport. `tests/test_display_repaint.nim` exercises an inert
+window on a private Xvfb display, including pixels beyond the old right edge
+after resizing. Set `MONO_RETRO_TEST_DISPLAY` to that private display before
+running `make test-display-repaint`; never point it at the live desktop.
+
 For desktop N64 games, `tools/retroarch-player.sh` can serve as `playerPath`.
 Add `--frontend:retroarch` to the N64 core's arguments; other cores continue
 through the bundled player. Install RetroArch and Mupen64Plus-Next, then sign in
