@@ -4,6 +4,9 @@ check:
 	nim check tests/test_gamelibrary.nim
 	nim check tests/test_rommclient.nim
 	nim check tests/test_libraryview.nim
+	nim check tests/test_power_sources.nim
+	nim check tests/test_desktop_power.nim
+	nim check tests/test_power_cli.nim
 	nim check tests/test_touchkeyboard.nim
 	nim check tests/test_wifi.nim
 	nim check src/wificli.nim
@@ -59,6 +62,8 @@ test:
 	nim r tests/test_hardware.nim
 	nim r tests/test_gamepad.nim
 	nim r tests/test_launcher.nim
+	nim r -o:build/test-power-sources tests/test_power_sources.nim
+	nim r -o:build/test-desktop-power tests/test_desktop_power.nim
 	nim r -o:build/test-player tests/test_player.nim
 	nim r -o:build/test-systemvolume tests/test_systemvolume.nim
 	nim r -o:build/test-playerslots tests/test_playerslots.nim
@@ -116,6 +121,10 @@ launcher-handhelds: handhelds library-handhelds
 .PHONY: test-launcher-x11
 test-launcher-x11: launcher-desktop
 	nim r tests/integration_launcher_x11.nim
+
+.PHONY: test-power-cli
+test-power-cli: launcher-desktop
+	nim r -o:build/test-power-cli tests/test_power_cli.nim build/mono-retro
 
 test-library-x11: launcher-desktop
 	nim r tests/integration_library_x11.nim

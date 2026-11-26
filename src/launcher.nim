@@ -1,5 +1,5 @@
 import
-  std/[monotimes, os, osproc, parseopt, posix, strutils, times],
+  std/[json, monotimes, os, osproc, parseopt, posix, strutils, times],
   paddy, pixie, windy,
   retro/[anbernic, display, gamepad, input, launcherui, libraryapp, menu, menuthemes, powercontrol, settings,
     systeminfo, systemvolume, testerprocess, volumeui]
@@ -14,6 +14,7 @@ const
   Help = """Usage: mono-retro [--library:DIR --config:FILE] [--seconds:N] [device/display options]
 With --library, browse games, manage RomM and launch the player using card-backed saves.
 Use --theme:library|showcase|pocket|workbench for a temporary library style override.
+Use --power-status to print selected system power as JSON without opening the menu.
 Without --library, retain the diagnostic menu and its --tester, --decompbound and --lost-in-blue overrides.
 Hardware Test, System Info, Reboot, Shut Down, Decompbound and installed Lost in Blue.
 Use arrows/D-pad/stick, A/Enter to open, and B/Back/Escape to return.
@@ -38,6 +39,7 @@ proc main() =
     themeOverride: string
     libraryConfig = getHomeDir() / ".config" / "mono-retro" / "library.json"
     duration = 0
+    powerOnly = false
     parser = initOptParser(commandLineParams())
   for kind, key, value in parser.getopt():
     if kind == cmdLongOption and key == "tester": tester = absolutePath(value)
@@ -51,11 +53,20 @@ proc main() =
     elif kind == cmdLongOption and key == "seconds":
       duration = parseInt(value)
       if duration < 1: raise newException(ValueError, "Duration must be positive")
+    elif kind == cmdLongOption and key == "power-status": powerOnly = true
     elif kind == cmdLongOption and key == "help":
       stdout.write(Help)
       return
     elif kind == cmdLongOption: arguments.add "--" & key & (if value.len > 0: ":" & value else: "")
     else: raise newException(ValueError, "Expected a launcher option")
+  if powerOnly:
+    let
+      settings = parseSettings(arguments, detectDevice())
+      power = readPower(settings.batterySupply, currentSupply = settings.batteryCurrentSupply)
+      reading = power.selectedBattery()
+    stdout.writeLine $(%*{"source": power.selected, "percent": reading.percent,
+      "ups": reading.ups, "text": power.batteryText(), "charge": power.chargeText()})
+    return
   if libraryRoot.len > 0:
     posix.signal(SIGINT, stopHandler)
     posix.signal(SIGTERM, stopHandler)

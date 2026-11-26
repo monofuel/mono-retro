@@ -25,7 +25,9 @@ proc main() =
   doAssert draining.batteryText() == "UPS 72% · On battery"
   doAssert upowerStatus(displayDevice(present = false)).batteries.len == 0
   doAssert upowerStatus(displayDevice(kind = 5)).batteries.len == 0
-  doAssert upowerStatus(displayDevice(supply = false)).batteries.len == 1
+  doAssert upowerStatus(displayDevice(supply = false)).batteries.len == 0
+  doAssert upowerStatus(displayDevice(kind = 2, supply = false)).batteries.len == 0
+  doAssert upowerStatus(displayDevice(kind = 12, supply = false)).batteries.len == 0
   doAssert upowerStatus(displayDevice(percent = 101)).selectedBattery().percent == -1
   doAssert upowerStatus(displayDevice(state = 0)).batteryText() == "UPS 100%"
   doAssert upowerStatus(displayDevice(state = 6)).batteryText() == "UPS 100%"
@@ -51,6 +53,7 @@ proc main() =
   writeFile(fixture / "busctl", "#!/bin/sh\nprintf '%s' " & quoteShell(displayDevice()) & "\n")
   setFilePermissions(fixture / "busctl", {fpUserRead, fpUserWrite, fpUserExec})
   doAssert desktopPower().batteryText() == "UPS 100% · Plugged in"
+  doAssert readPower("").batteryText() == "UPS 100% · Plugged in"
   writeFile(fixture / "busctl", "#!/bin/sh\nprintf invalid\n")
   doAssert desktopPower().batteries.len == 0
   putEnv("MONO_RETRO_TEST_LINK", marker)

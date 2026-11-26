@@ -20,6 +20,12 @@ Both executables and `mono-retro-library` must be installed together. Without
 The header hides its battery indicator when no battery or UPS is detected.
 Desktop UPS charge comes from the running UPower service; handheld gauges
 continue to use their configured Linux power supplies.
+Controller and other device-scoped batteries are excluded from system power.
+Without UPower, automatic detection accepts only system-scoped batteries or
+UPS supplies; UPSes take priority, with names sorted for deterministic selection.
+Missing or invalid charge remains unavailable rather than becoming zero.
+`mono-retro --power-status` prints the same selected source as JSON without
+opening windows or input/audio devices.
 
 For desktop N64 games, `tools/retroarch-player.sh` can serve as `playerPath`.
 Add `--frontend:retroarch` to the N64 core's arguments; other cores continue

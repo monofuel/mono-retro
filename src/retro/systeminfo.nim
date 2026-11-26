@@ -23,7 +23,8 @@ proc upowerStatus*(contents: string): PowerStatus =
   ## Decode UPower's typed display-device properties, excluding peripheral batteries.
   let properties = parseJson(contents)["data"][0]
   let kind = properties{"Type", "data"}.getInt()
-  if kind notin [2, 3] or not properties{"IsPresent", "data"}.getBool(): return
+  if kind notin [2, 3] or not properties{"IsPresent", "data"}.getBool() or
+      not properties{"PowerSupply", "data"}.getBool(): return
   let
     percentage = properties{"Percentage", "data"}.getFloat(-1)
     state = properties{"State", "data"}.getInt()
@@ -58,17 +59,31 @@ proc desktopPower*(): PowerStatus =
 proc readPower*(selected: string, root = "/sys/class/power_supply",
     currentSupply = ""): PowerStatus =
   ## Read independent kernel gauges, retaining failures for the information view.
+  if selected.len == 0 and root == "/sys/class/power_supply":
+    # UPower's system display device includes USB UPSes absent from power_supply.
+    result = desktopPower()
+    if result.batteries.len > 0: return
   result.selected = selected
   result.currentSupply = currentSupply
   var paths: seq[string]
   for path in walkDirs(root / "*"): paths.add path
   paths.sort()
   for path in paths:
+    let name = path.extractFilename()
+    var systemSupply, ups: bool
     try:
-      if readValue(path / "type") != "Battery":
+      let
+        kind = readValue(path / "type")
+        scope = readValue(path / "scope")
+      if scope == "Device" or readValue(path / "present") == "0": continue
+      if kind notin ["Battery", "UPS"]:
         if readValue(path / "online") == "1": result.external = true
         continue
-      var reading = BatteryReading(name: path.extractFilename(), percent: -1,
+      # Profile-owned handheld gauges may predate scope metadata.
+      if selected.len == 0 and kind == "Battery" and scope != "System": continue
+      systemSupply = true
+      ups = kind == "UPS"
+      var reading = BatteryReading(name: name, percent: -1, ups: ups,
         status: readValue(path / "status"))
       let capacity = readValue(path / "capacity")
       if capacity.len > 0:
@@ -88,12 +103,15 @@ proc readPower*(selected: string, root = "/sys/class/power_supply",
         reading.error &= "Current unavailable: " & getCurrentExceptionMsg()
       result.batteries.add reading
     except IOError, OSError:
-      result.batteries.add BatteryReading(name: path.extractFilename(),
-        percent: -1, error: getCurrentExceptionMsg())
+      if systemSupply or (selected.len > 0 and (name == selected or name == currentSupply)):
+        result.batteries.add BatteryReading(name: name,
+          percent: -1, ups: ups, error: getCurrentExceptionMsg())
   if result.selected.len == 0 and result.batteries.len > 0:
     result.selected = result.batteries[0].name
-  if result.batteries.len == 0 and selected.len == 0 and root == "/sys/class/power_supply":
-    result = desktopPower()
+    for reading in result.batteries:
+      if reading.ups:
+        result.selected = reading.name
+        break
 
 proc selectedBattery*(power: PowerStatus): BatteryReading =
   ## Never substitute a different gauge for an explicitly selected battery.
